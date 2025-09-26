@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import ListingCard from '../components/ListingCard'; // 确保已导入 ListingCard
+import { useAuth } from '../context/AuthContext';
 
 const HomePage = () => {
     const [activeMode, setActiveMode] = useState('sale'); // 当前选中的模式
@@ -73,6 +74,7 @@ const HomePage = () => {
             const response = await api.get('/api/listings', {
                 params: {
                     type: activeMode,
+                    status: 'available',
                     searchTerm: searchTerm || undefined,
                     category: category !== 'all' ? category : undefined, // 只有非'all'才发送category
                 }
@@ -94,14 +96,31 @@ const HomePage = () => {
         return () => clearTimeout(debounceFetch); // 清除定时器
     }, [fetchListings]); // 依赖项现在只包含 fetchListings
 
-    const handlePurchase = (item) => {
-        alert(`功能待实现: 购买 ${item.title}`);
-        // TODO: 第三部分实现实际购买逻辑
+    const { user } = useAuth(); // 获取当前登录用户
+
+   
+    // ✅ 核心更新：实现完整的购买逻辑
+    const handlePurchase = async (item) => {
+        if (!user) {
+            alert('请先登录再进行购买！');
+            return;
+        }
+        if (window.confirm(`确定要以 ¥${item.price} 的价格购买 "${item.title}" 吗？`)) {
+            try {
+                const response = await api.post('/api/orders', { listingId: item.id });
+                alert('下单成功！请前往“我的订单”页面查看并完成支付。');
+                onNavigate('myOrders'); // 下单成功后，自动跳转到订单页面
+            } catch (error) {
+                alert(error.response?.data?.message || '下单失败，该商品可能已被预定或不存在。');
+                console.error(error);
+                fetchListings(); // 如果下单失败，刷新列表以获取最新状态
+            }
+        }
     };
 
     const handleContact = (item) => {
         alert(`功能待实现: 联系 ${item.user_name} 关于 ${item.title}`);
-        // TODO: 第三部分实现私信/联系功能
+        onNavigate('messages'); // 点击联系后，跳转到消息页面
     };
 
     return (

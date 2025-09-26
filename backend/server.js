@@ -1,6 +1,6 @@
 // =================================================================
 // “喻园易站” - 后端服务器主文件
-// 版本: 1.2 - 增加完整CRUD路由和文件删除逻辑
+// 版本: 1.3 - 实现完整的订单状态流转API
 // =================================================================
 
 require('dotenv').config();
@@ -234,7 +234,9 @@ app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// --- 5.3 订单路由 (Orders Routes) ---
+// --- 5.3 订单路由 (Orders Routes) --- (全部为受保护接口)
+
+// 创建订单 (买家点击“立即购买”)
 app.post('/api/orders', authenticateToken, async (req, res) => {
     const { listingId } = req.body;
     const { id: buyerId } = req.user;
@@ -248,18 +250,18 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
         await connection.beginTransaction();
 
         const [listings] = await connection.execute('SELECT * FROM listings WHERE id = ? FOR UPDATE', [listingId]);
-        if (listings.length === 0 || listings[0].status !== 'available') {
+        if (listings.length === 0 || listings[0].status !== 'available' || listings[0].user_id === buyerId) {
             await connection.rollback();
-            return res.status(400).json({ message: 'This item is not available for purchase.' });
+            return res.status(400).json({ message: 'This item is not available for purchase or it is your own item.' });
         }
         const listing = listings[0];
-
+        
         const [orderResult] = await connection.execute(
-            'INSERT INTO orders (listing_id, buyer_id, seller_id, price) VALUES (?, ?, ?, ?)',
+            'INSERT INTO orders (listing_id, buyer_id, seller_id, price, status) VALUES (?, ?, ?, ?, "to_pay")',
             [listing.id, buyerId, listing.user_id, listing.price]
         );
         await connection.execute('UPDATE listings SET status = "in_progress" WHERE id = ?', [listing.id]);
-
+        
         await connection.commit();
         res.status(201).json({ message: 'Order created successfully!', orderId: orderResult.insertId });
     } catch (err) {
@@ -270,30 +272,94 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     }
 });
 
+// 获取我的订单列表
 app.get('/api/orders', authenticateToken, async (req, res) => {
     const { id: userId } = req.user;
-    const { role } = req.query;
+    const { role, status } = req.query; // role: 'buyer' or 'seller'
     if (!['buyer', 'seller'].includes(role)) {
         return res.status(400).json({ message: 'Role must be "buyer" or "seller".' });
     }
     try {
-        const sql = `
-            SELECT o.*, l.title as listing_title, l.image_url as listing_image_url
+        let sql = `
+            SELECT o.*, l.title as listing_title, l.image_url as listing_image_url,
+            u_buyer.username as buyer_name, u_seller.username as seller_name
             FROM orders o
             JOIN listings l ON o.listing_id = l.id
+            JOIN users u_buyer ON o.buyer_id = u_buyer.id
+            JOIN users u_seller ON o.seller_id = u_seller.id
             WHERE ${role === 'buyer' ? 'o.buyer_id' : 'o.seller_id'} = ?
-            ORDER BY o.created_at DESC
         `;
-        const [rows] = await pool.execute(sql, [userId]);
+        const params = [userId];
+        if(status && status !== 'all') {
+            sql += ' AND o.status = ?';
+            params.push(status);
+        }
+        sql += ' ORDER BY o.created_at DESC';
+        const [rows] = await pool.execute(sql, params);
         res.json(rows);
     } catch (err) {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
 });
 
+// [核心更新] 更新订单状态 (支付、发货、确认收货、取消)
 app.put('/api/orders/:id/status', authenticateToken, async (req, res) => {
-    res.status(501).json({ message: "Not Implemented" });
+    const orderId = req.params.id;
+    const { id: userId } = req.user;
+    const { newStatus } = req.body;
+
+    const validStatuses = ['to_ship', 'to_receive', 'completed', 'cancelled'];
+    if (!validStatuses.includes(newStatus)) {
+        return res.status(400).json({ message: 'Invalid new status provided.' });
+    }
+
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        const [orders] = await connection.execute('SELECT * FROM orders WHERE id = ? FOR UPDATE', [orderId]);
+        if (orders.length === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+        const order = orders[0];
+        const listingId = order.listing_id;
+
+        // 权限校验
+        let canUpdate = false;
+        // 买家支付：to_pay -> to_ship
+        if (newStatus === 'to_ship' && order.status === 'to_pay' && order.buyer_id === userId) canUpdate = true;       // 买家“支付”
+        if (newStatus === 'to_receive' && order.status === 'to_ship' && order.seller_id === userId) canUpdate = true; // 卖家“发货”
+        if (newStatus === 'completed' && order.status === 'to_receive' && order.buyer_id === userId) canUpdate = true;   // 买家“确认收货”
+        if (newStatus === 'cancelled' && ['to_pay', 'to_ship'].includes(order.status) && (order.buyer_id === userId || order.seller_id === userId)) canUpdate = true; // 双方可取消早期订单
+
+        if (!canUpdate) {
+            await connection.rollback();
+            return res.status(403).json({ message: 'Forbidden: You cannot perform this action on this order.' });
+        }
+
+        // 1. 更新订单状态
+        await connection.execute('UPDATE orders SET status = ? WHERE id = ?', [newStatus, orderId]);
+
+        // 2. 根据新状态更新商品状态
+        if (newStatus === 'completed') {
+            await connection.execute('UPDATE listings SET status = "completed" WHERE id = ?', [listingId]);
+        } else if (newStatus === 'cancelled') {
+            await connection.execute('UPDATE listings SET status = "available" WHERE id = ?', [listingId]);
+        }
+        
+        await connection.commit();
+        res.json({ message: `Order status updated to ${newStatus} successfully.` });
+
+    } catch (err) {
+        if (connection) await connection.rollback();
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    } finally {
+        if (connection) connection.release();
+    }
 });
+
 
 // --- 5.4 回复路由 (Replies Routes) ---
 app.get('/api/listings/:id/replies', async (req, res) => {
