@@ -1,11 +1,12 @@
 // =================================================================
 // “喻园易站” - 后端服务器主文件
-// 版本: 1.1 - 集成完整API路由
+// 版本: 1.2 - 增加完整CRUD路由和文件删除逻辑
 // =================================================================
 
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const fs = require('fs'); // 新增: 用于删除图片文件
 const mysql = require('mysql2/promise');
 const bodyParser = require('body-parser');
 const cors = require('cors');
@@ -35,7 +36,6 @@ const pool = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    // 增加时区配置以确保时间准确
     timezone: '+08:00'
 });
 
@@ -46,7 +46,7 @@ const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, 'uploads/'),
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+        cb(null, 'image-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
 const upload = multer({
@@ -66,12 +66,12 @@ const upload = multer({
 // =================================================================
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-    if (token == null) return res.sendStatus(401); // Unauthorized
+    const token = authHeader && authHeader.split(' ')[1];
+    if (token == null) return res.sendStatus(401);
 
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403); // Forbidden (token is no longer valid)
-        req.user = user; // 将解码后的用户信息附加到请求对象上
+        if (err) return res.sendStatus(403);
+        req.user = user;
         next();
     });
 };
@@ -123,7 +123,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 // --- 5.2 帖子/商品路由 (Listings Routes) ---
 
-// 获取帖子列表 (公开接口，无需登录)
+// 获取帖子列表 (公开接口)
 app.get('/api/listings', async (req, res) => {
     try {
         const { type, userId, status, searchTerm, category } = req.query;
@@ -142,11 +142,12 @@ app.get('/api/listings', async (req, res) => {
     }
 });
 
-// 发布新帖子 (受保护接口，需要登录)
+// 发布新帖子 (受保护接口)
 app.post('/api/listings', authenticateToken, upload.single('image'), async (req, res) => {
     const { title, description, price, category, type } = req.body;
     const { id: userId, username: userName } = req.user;
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
+
     if (!title || !description || !type) {
         return res.status(400).json({ message: 'Title, description, and type are required.' });
     }
@@ -162,27 +163,78 @@ app.post('/api/listings', authenticateToken, upload.single('image'), async (req,
     }
 });
 
-// 删除帖子 (受保护接口)
+// 更新帖子 (新增 PUT 路由)
+app.put('/api/listings/:id', authenticateToken, upload.single('image'), async (req, res) => {
+    const listingId = req.params.id;
+    const { id: userId } = req.user;
+    const { title, description, price, category, existingImageUrl } = req.body;
+
+    let imageUrl = existingImageUrl;
+    if (req.file) {
+        imageUrl = `/uploads/${req.file.filename}`;
+    }
+
+    try {
+        const [listings] = await pool.execute('SELECT * FROM listings WHERE id = ?', [listingId]);
+        if (listings.length === 0) {
+            return res.status(404).json({ message: 'Listing not found.' });
+        }
+        if (listings[0].user_id !== userId) {
+            return res.status(403).json({ message: 'Forbidden: You do not own this listing.' });
+        }
+
+        // 删除旧图片
+        if (req.file && listings[0].image_url) {
+            const oldImagePath = path.join(__dirname, listings[0].image_url);
+            if (fs.existsSync(oldImagePath)) {
+                fs.unlinkSync(oldImagePath);
+            }
+        }
+
+        const sql = `
+            UPDATE listings SET title = ?, description = ?, price = ?, category = ?, image_url = ?
+            WHERE id = ? AND user_id = ?
+        `;
+        await pool.execute(sql, [title, description, price, category, imageUrl, listingId, userId]);
+
+        res.json({ message: 'Listing updated successfully.' });
+    } catch (err) {
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+// 删除帖子 (增强版 DELETE 路由)
 app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
     const listingId = req.params.id;
     const { id: userId } = req.user;
     try {
-        // 确保只有帖子的所有者才能删除
-        const [result] = await pool.execute('DELETE FROM listings WHERE id = ? AND user_id = ?', [listingId, userId]);
-        if (result.affectedRows === 0) {
+        const [listings] = await pool.execute('SELECT image_url FROM listings WHERE id = ? AND user_id = ?', [listingId, userId]);
+        if (listings.length === 0) {
             return res.status(403).json({ message: 'Forbidden: You do not own this listing or it does not exist.' });
         }
+        const { image_url } = listings[0];
+
+        const [result] = await pool.execute('DELETE FROM listings WHERE id = ? AND user_id = ?', [listingId, userId]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Listing not found.' });
+        }
+
+        if (image_url) {
+            const imagePath = path.join(__dirname, image_url);
+            if (fs.existsSync(imagePath)) {
+                fs.unlink(imagePath, (err) => {
+                    if (err) console.error("Error deleting image file:", err);
+                });
+            }
+        }
+
         res.json({ message: 'Listing deleted successfully.' });
     } catch (err) {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
 });
 
-// (更新帖子的 PUT 路由可以后续添加)
-
-// --- 5.3 订单路由 (Orders Routes) --- (全部为受保护接口)
-
-// 创建订单 (买家点击“立即购买”)
+// --- 5.3 订单路由 (Orders Routes) ---
 app.post('/api/orders', authenticateToken, async (req, res) => {
     const { listingId } = req.body;
     const { id: buyerId } = req.user;
@@ -201,13 +253,13 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
             return res.status(400).json({ message: 'This item is not available for purchase.' });
         }
         const listing = listings[0];
-        
+
         const [orderResult] = await connection.execute(
             'INSERT INTO orders (listing_id, buyer_id, seller_id, price) VALUES (?, ?, ?, ?)',
             [listing.id, buyerId, listing.user_id, listing.price]
         );
         await connection.execute('UPDATE listings SET status = "in_progress" WHERE id = ?', [listing.id]);
-        
+
         await connection.commit();
         res.status(201).json({ message: 'Order created successfully!', orderId: orderResult.insertId });
     } catch (err) {
@@ -218,10 +270,9 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
     }
 });
 
-// 获取我的订单列表
 app.get('/api/orders', authenticateToken, async (req, res) => {
     const { id: userId } = req.user;
-    const { role } = req.query; // 'buyer' or 'seller'
+    const { role } = req.query;
     if (!['buyer', 'seller'].includes(role)) {
         return res.status(400).json({ message: 'Role must be "buyer" or "seller".' });
     }
@@ -240,16 +291,11 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     }
 });
 
-// 更新订单状态 (支付、确认收货、取消)
 app.put('/api/orders/:id/status', authenticateToken, async (req, res) => {
-    // 此处省略具体实现，但逻辑应包含校验用户是否有权操作此订单
     res.status(501).json({ message: "Not Implemented" });
 });
 
-
 // --- 5.4 回复路由 (Replies Routes) ---
-
-// 获取帖子的回复列表 (公开接口)
 app.get('/api/listings/:id/replies', async (req, res) => {
     try {
         const [rows] = await pool.execute('SELECT * FROM replies WHERE listing_id = ? ORDER BY created_at ASC', [req.params.id]);
@@ -259,7 +305,6 @@ app.get('/api/listings/:id/replies', async (req, res) => {
     }
 });
 
-// 发布新回复 (受保护接口)
 app.post('/api/listings/:id/replies', authenticateToken, async (req, res) => {
     const listingId = req.params.id;
     const { content } = req.body;
@@ -277,7 +322,6 @@ app.post('/api/listings/:id/replies', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
 });
-
 
 // =================================================================
 // 6. 启动服务器 (Start Server)
