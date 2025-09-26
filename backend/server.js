@@ -392,7 +392,9 @@ app.post('/api/listings/:id/replies', authenticateToken, async (req, res) => {
 // =================================================================
 // 6. 启动服务器 (Start Server)
 // =================================================================
-app.listen(port, () => {
-    console.log(`Backend server is running on http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Backend server is running on http://0.0.0.0:${port}`);
+    console.log(`Local access: http://localhost:${port}`);
+    console.log(`Network access: http://192.168.31.157:${port}`);
     console.log('Press Ctrl+C to stop the server.');
 });

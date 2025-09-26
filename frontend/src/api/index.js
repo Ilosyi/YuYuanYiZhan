@@ -1,6 +1,17 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:3000';
+// 根据当前域名动态设置 API 地址
+const getApiBaseUrl = () => {
+    const hostname = window.location.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return 'http://localhost:3000';
+    } else {
+        // 局域网访问时，使用当前设备的 IP
+        return `http://${hostname}:3000`;
+    }
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 const api = axios.create({
     baseURL: API_BASE_URL,
