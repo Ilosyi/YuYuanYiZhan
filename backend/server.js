@@ -5,6 +5,7 @@
 
 require('dotenv').config();
 const express = require('express');
+const http = require('http');
 const path = require('path');
 const fs = require('fs'); // 新增: 用于删除图片文件
 const mysql = require('mysql2/promise');
@@ -13,8 +14,10 @@ const cors = require('cors');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { WebSocketServer } = require('ws');
 
 const app = express();
+const server = http.createServer(app);
 const port = process.env.PORT || 3000;
 
 // =================================================================
@@ -38,6 +41,33 @@ const pool = mysql.createPool({
     queueLimit: 0,
     timezone: '+08:00'
 });
+
+async function initializeDatabase() {
+    const createMessagesTableSQL = `
+        CREATE TABLE IF NOT EXISTS messages (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            listing_id INT NULL,
+            sender_id INT NOT NULL,
+            receiver_id INT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            read_at TIMESTAMP NULL,
+            INDEX idx_sender_receiver (sender_id, receiver_id),
+            INDEX idx_receiver_read (receiver_id, read_at),
+            INDEX idx_created_at (created_at),
+            CONSTRAINT fk_messages_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_messages_receiver FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_messages_listing FOREIGN KEY (listing_id) REFERENCES listings(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `;
+    try {
+        await pool.execute(createMessagesTableSQL);
+    } catch (error) {
+        console.error('数据库初始化失败:', error.message);
+    }
+}
+
+initializeDatabase();
 
 // =================================================================
 // 3. 文件上传配置 (Multer File Upload)
@@ -234,6 +264,34 @@ app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
     }
 });
 
+app.get('/api/listings/:id/detail', async (req, res) => {
+    const listingId = req.params.id;
+    try {
+        const [listings] = await pool.execute(`
+            SELECT l.*, u.username AS owner_name
+            FROM listings l
+            JOIN users u ON l.user_id = u.id
+            WHERE l.id = ?
+        `, [listingId]);
+
+        if (listings.length === 0) {
+            return res.status(404).json({ message: 'Listing not found.' });
+        }
+
+        const listing = listings[0];
+        const [replies] = await pool.execute(`
+            SELECT r.id, r.user_id, r.user_name, r.content, r.created_at
+            FROM replies r
+            WHERE r.listing_id = ?
+            ORDER BY r.created_at ASC
+        `, [listingId]);
+
+        res.json({ listing, replies });
+    } catch (err) {
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
 // --- 5.3 订单路由 (Orders Routes) --- (全部为受保护接口)
 
 // 创建订单 (买家点击“立即购买”)
@@ -360,8 +418,103 @@ app.put('/api/orders/:id/status', authenticateToken, async (req, res) => {
     }
 });
 
+// --- 5.4 消息路由 (Messaging Routes) ---
+app.get('/api/messages/conversations', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+    try {
+        const [rows] = await pool.execute(`
+            SELECT
+                IF(sender_id = ?, receiver_id, sender_id) AS other_user_id,
+                MAX(created_at) AS last_message_at,
+                SUBSTRING_INDEX(MAX(CONCAT(created_at, '\x1f', content)), '\x1f', -1) AS last_message,
+                SUM(CASE WHEN receiver_id = ? AND read_at IS NULL THEN 1 ELSE 0 END) AS unread_count
+            FROM messages
+            WHERE sender_id = ? OR receiver_id = ?
+            GROUP BY other_user_id
+            ORDER BY last_message_at DESC
+        `, [userId, userId, userId, userId]);
 
-// --- 5.4 回复路由 (Replies Routes) ---
+        if (rows.length === 0) {
+            return res.json([]);
+        }
+
+        const otherIds = rows.map(row => row.other_user_id);
+        const [users] = await pool.query('SELECT id, username FROM users WHERE id IN (?)', [otherIds]);
+        const userMap = new Map(users.map(user => [user.id, user]));
+
+        const conversations = rows
+            .filter(row => userMap.has(row.other_user_id))
+            .map(row => ({
+                otherUserId: row.other_user_id,
+                otherUsername: userMap.get(row.other_user_id).username,
+                lastMessage: row.last_message,
+                lastMessageAt: row.last_message_at,
+                unreadCount: Number(row.unread_count || 0)
+            }));
+
+        res.json(conversations);
+    } catch (err) {
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+app.get('/api/messages/conversations/:otherUserId/messages', authenticateToken, async (req, res) => {
+    const { otherUserId } = req.params;
+    const userId = req.user.id;
+    const targetId = Number(otherUserId);
+
+    if (!Number.isInteger(targetId)) {
+        return res.status(400).json({ message: 'Invalid user id.' });
+    }
+
+    try {
+        const [userRows] = await pool.execute('SELECT id, username FROM users WHERE id = ?', [targetId]);
+        if (userRows.length === 0) {
+            return res.status(404).json({ message: 'Conversation target not found.' });
+        }
+
+        const [messages] = await pool.execute(`
+            SELECT id, sender_id, receiver_id, content, created_at, read_at, listing_id
+            FROM messages
+            WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+            ORDER BY created_at ASC
+            LIMIT 500
+        `, [userId, targetId, targetId, userId]);
+
+        res.json({
+            otherUser: {
+                id: userRows[0].id,
+                username: userRows[0].username
+            },
+            messages
+        });
+    } catch (err) {
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+app.post('/api/messages/conversations/:otherUserId/read', authenticateToken, async (req, res) => {
+    const { otherUserId } = req.params;
+    const userId = req.user.id;
+    const targetId = Number(otherUserId);
+
+    if (!Number.isInteger(targetId)) {
+        return res.status(400).json({ message: 'Invalid user id.' });
+    }
+
+    try {
+        await pool.execute(
+            'UPDATE messages SET read_at = NOW() WHERE receiver_id = ? AND sender_id = ? AND read_at IS NULL',
+            [userId, targetId]
+        );
+        res.json({ message: 'Conversation marked as read.' });
+    } catch (err) {
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+
+// --- 5.5 回复路由 (Replies Routes) ---
 app.get('/api/listings/:id/replies', async (req, res) => {
     try {
         const [rows] = await pool.execute('SELECT * FROM replies WHERE listing_id = ? ORDER BY created_at ASC', [req.params.id]);
@@ -392,9 +545,198 @@ app.post('/api/listings/:id/replies', authenticateToken, async (req, res) => {
 // =================================================================
 // 6. 启动服务器 (Start Server)
 // =================================================================
-app.listen(port, '0.0.0.0', () => {
+
+// =================================================================
+// 6. WebSocket 服务器 (WebSocket Server)
+// =================================================================
+const activeClients = new Map(); // userId -> Set<WebSocket>
+
+const sendJson = (socket, payload) => {
+    if (!socket || socket.readyState !== socket.OPEN) return;
+    socket.send(JSON.stringify(payload));
+};
+
+const broadcastToUser = (userId, payload) => {
+    const sockets = activeClients.get(userId);
+    if (!sockets) return;
+    sockets.forEach(socket => sendJson(socket, payload));
+};
+
+const registerSocket = (userId, socket) => {
+    if (!activeClients.has(userId)) {
+        activeClients.set(userId, new Set());
+    }
+    activeClients.get(userId).add(socket);
+};
+
+const unregisterSocket = (userId, socket) => {
+    if (!activeClients.has(userId)) return;
+    const sockets = activeClients.get(userId);
+    sockets.delete(socket);
+    if (sockets.size === 0) {
+        activeClients.delete(userId);
+    }
+};
+
+async function buildConversationSnapshot(currentUserId, otherUserId) {
+    const [rows] = await pool.execute(`
+        SELECT
+            MAX(created_at) AS last_message_at,
+            SUBSTRING_INDEX(MAX(CONCAT(created_at, '\x1f', content)), '\x1f', -1) AS last_message,
+            SUM(CASE WHEN receiver_id = ? AND read_at IS NULL THEN 1 ELSE 0 END) AS unread_count
+        FROM messages
+        WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+    `, [currentUserId, currentUserId, otherUserId, otherUserId, currentUserId]);
+
+    if (!rows || rows.length === 0 || rows[0].last_message_at === null) {
+        return null;
+    }
+
+    const [userRows] = await pool.execute('SELECT id, username FROM users WHERE id = ?', [otherUserId]);
+    if (userRows.length === 0) {
+        return null;
+    }
+
+    const row = rows[0];
+    return {
+        otherUserId,
+        otherUsername: userRows[0].username,
+        lastMessage: row.last_message,
+        lastMessageAt: row.last_message_at,
+        unreadCount: Number(row.unread_count || 0)
+    };
+}
+
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+wss.on('connection', (socket, req) => {
+    try {
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const token = url.searchParams.get('token');
+        if (!token) {
+            sendJson(socket, { type: 'error', message: 'Missing authentication token.' });
+            return socket.close(4001, 'Unauthorized');
+        }
+
+        let user;
+        try {
+            user = jwt.verify(token, process.env.JWT_SECRET);
+        } catch (error) {
+            sendJson(socket, { type: 'error', message: 'Invalid or expired token.' });
+            return socket.close(4001, 'Unauthorized');
+        }
+
+        socket.user = user;
+        registerSocket(user.id, socket);
+        sendJson(socket, { type: 'ready' });
+
+        socket.on('message', async (messageBuffer) => {
+            let payload;
+            try {
+                payload = JSON.parse(messageBuffer.toString());
+            } catch (error) {
+                return sendJson(socket, { type: 'error', message: 'Invalid JSON payload.' });
+            }
+
+            if (payload.type !== 'message') {
+                return;
+            }
+
+            const toUserId = Number(payload.toUserId);
+            const content = (payload.content || '').trim();
+            const listingId = payload.listingId ? Number(payload.listingId) : null;
+
+            if (!Number.isInteger(toUserId) || toUserId <= 0) {
+                return sendJson(socket, { type: 'error', message: 'Invalid recipient.' });
+            }
+
+            if (!content) {
+                return sendJson(socket, { type: 'error', message: 'Message content cannot be empty.' });
+            }
+
+            if (toUserId === user.id) {
+                return sendJson(socket, { type: 'error', message: 'Cannot send message to yourself.' });
+            }
+
+            try {
+                const [result] = await pool.execute(
+                    'INSERT INTO messages (sender_id, receiver_id, content, listing_id) VALUES (?, ?, ?, ?)',
+                    [user.id, toUserId, content, listingId || null]
+                );
+
+                const messageId = result.insertId;
+                const [rows] = await pool.execute(`
+                    SELECT m.id, m.sender_id, m.receiver_id, m.content, m.created_at, m.listing_id,
+                           s.username AS sender_username, r.username AS receiver_username
+                    FROM messages m
+                    JOIN users s ON m.sender_id = s.id
+                    JOIN users r ON m.receiver_id = r.id
+                    WHERE m.id = ?
+                `, [messageId]);
+
+                if (rows.length === 0) {
+                    return;
+                }
+
+                const savedMessage = rows[0];
+                const messagePayload = {
+                    type: 'message',
+                    data: {
+                        id: savedMessage.id,
+                        senderId: savedMessage.sender_id,
+                        senderUsername: savedMessage.sender_username,
+                        receiverId: savedMessage.receiver_id,
+                        receiverUsername: savedMessage.receiver_username,
+                        content: savedMessage.content,
+                        createdAt: savedMessage.created_at,
+                        listingId: savedMessage.listing_id
+                    }
+                };
+
+                broadcastToUser(user.id, messagePayload);
+                broadcastToUser(toUserId, messagePayload);
+
+                const [summaryForSender, summaryForReceiver] = await Promise.all([
+                    buildConversationSnapshot(user.id, toUserId),
+                    buildConversationSnapshot(toUserId, user.id)
+                ]);
+
+                if (summaryForSender) {
+                    broadcastToUser(user.id, { type: 'conversation:update', data: summaryForSender });
+                }
+                if (summaryForReceiver) {
+                    broadcastToUser(toUserId, { type: 'conversation:update', data: summaryForReceiver });
+                }
+            } catch (error) {
+                console.error('WebSocket message error:', error);
+                sendJson(socket, { type: 'error', message: 'Failed to send message.' });
+            }
+        });
+
+        socket.on('close', () => {
+            if (socket.user) {
+                unregisterSocket(socket.user.id, socket);
+            }
+        });
+
+        socket.on('error', () => {
+            if (socket.user) {
+                unregisterSocket(socket.user.id, socket);
+            }
+        });
+    } catch (error) {
+        console.error('WebSocket connection error:', error.message);
+        sendJson(socket, { type: 'error', message: 'Unexpected error occurred.' });
+        socket.close(1011, 'Unexpected error');
+    }
+});
+
+// =================================================================
+// 7. 启动服务器 (Start Server)
+// =================================================================
+server.listen(port, '0.0.0.0', () => {
     console.log(`Backend server is running on http://0.0.0.0:${port}`);
     console.log(`Local access: http://localhost:${port}`);
-    console.log(`Network access: http://192.168.31.157:${port}`);
+    console.log(`WebSocket endpoint: ws://localhost:${port}/ws`);
     console.log('Press Ctrl+C to stop the server.');
 });

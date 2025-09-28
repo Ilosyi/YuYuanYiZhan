@@ -31,4 +31,5 @@ api.interceptors.request.use(
     }
 );
 
+export { API_BASE_URL };
 export default api;

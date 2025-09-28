@@ -56,3 +56,6 @@ coverage/
 *.local
 *.tmp
 *.temp
+
+#docs
+/docs/*

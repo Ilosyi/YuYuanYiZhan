@@ -1,13 +1,9 @@
 // frontend/src/components/OrderCard.jsx
 // [请用此版本完全替换]
 import React from 'react';
-import api from '../api';
-import { useAuth } from '../context/AuthContext'; // 确保 useAuth 导入正确
-
-const API_BASE_URL = 'http://localhost:3000';
+import api, { API_BASE_URL } from '../api';
 
 const OrderCard = ({ order, role, onUpdate }) => {
-    const { user } = useAuth(); 
     // ✅ isBuyer 变量直接来自 props.role，确保它与 MyOrdersPage 中的 activeTab 保持一致
     const isBuyer = role === 'buyer'; 
 

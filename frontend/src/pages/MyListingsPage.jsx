@@ -27,6 +27,7 @@ const MyListingsPage = ({ currentUser, onEditListing }) => {
             });
             setMyListings(response.data);
         } catch (err) {
+            console.error(err);
             setError('加载我的发布失败，请稍后重试。');
         } finally {
             setIsLoading(false);
@@ -44,6 +45,7 @@ const MyListingsPage = ({ currentUser, onEditListing }) => {
                 fetchMyListings();
                 alert('删除成功！');
             } catch (err) {
+                console.error(err);
                 alert(err.response?.data?.message || '删除失败，请稍后再试。');
             }
         }

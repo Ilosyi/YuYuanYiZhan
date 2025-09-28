@@ -1,3 +1,5 @@
+import lineClamp from '@tailwindcss/line-clamp';
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -8,6 +10,6 @@ export default {
     extend: {}, // 可以在这里扩展自定义主题
   },
   plugins: [
-    require('@tailwindcss/line-clamp'), // 用于实现多行文本截断
+    lineClamp, // 用于实现多行文本截断
   ],
 }

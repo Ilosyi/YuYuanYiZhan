@@ -1,19 +1,58 @@
-import React, { useState, useEffect } from 'react';
-import api from '../api';
+import React, { useState, useEffect, useCallback } from 'react';
+import api, { API_BASE_URL } from '../api';
+
+const CATEGORY_OPTIONS = {
+    sale: [
+        { value: 'electronics', label: '电子产品' },
+        { value: 'books', label: '图书教材' },
+        { value: 'clothing', label: '服饰鞋包' },
+        { value: 'life', label: '生活用品' },
+        { value: 'service', label: '跑腿服务' },
+        { value: 'others', label: '其他' },
+    ],
+    acquire: [
+        { value: 'electronics', label: '电子产品' },
+        { value: 'books', label: '图书教材' },
+        { value: 'clothing', label: '服饰鞋包' },
+        { value: 'life', label: '生活用品' },
+        { value: 'service', label: '跑腿服务' },
+        { value: 'others', label: '其他' },
+    ],
+    help: [
+        { value: 'study', label: '学习求助' },
+        { value: 'life', label: '生活求助' },
+        { value: 'tech', label: '技术求助' },
+        { value: 'others', label: '其他' },
+    ],
+    lostfound: [
+        { value: 'lost', label: '寻物启事' },
+        { value: 'found', label: '失物招领' },
+    ],
+};
+
+const getDefaultCategory = (type) => {
+    const options = CATEGORY_OPTIONS[type] || [];
+    return options[0]?.value || '';
+};
 
 const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
-    // 根据编辑项或默认值初始化表单状态
-    const getInitialState = () => ({
-        type: editingItem?.type || 'sale',
-        title: editingItem?.title || '',
-        description: editingItem?.description || '',
-        price: editingItem?.price || '',
-        category: editingItem?.category || 'electronics',
-        image: null,
-    });
+    const getInitialState = useCallback(() => {
+        const initialType = editingItem?.type || 'sale';
+        return {
+            type: initialType,
+            title: editingItem?.title || '',
+            description: editingItem?.description || '',
+            price: editingItem?.price || '',
+            category: editingItem?.category || getDefaultCategory(initialType),
+            image: null,
+        };
+    }, [editingItem]);
 
-    const [formData, setFormData] = useState(getInitialState());
-    const [imagePreview, setImagePreview] = useState(editingItem?.image_url || null);
+    const [formData, setFormData] = useState(() => getInitialState());
+    const [imagePreview, setImagePreview] = useState(() => {
+        if (!editingItem?.image_url) return null;
+        return editingItem.image_url.startsWith('http') ? editingItem.image_url : `${API_BASE_URL}${editingItem.image_url}`;
+    });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
 
@@ -22,13 +61,29 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         if (isOpen) {
             const initialState = getInitialState();
             setFormData(initialState);
-            setImagePreview(editingItem?.image_url ? `http://localhost:3000${editingItem.image_url}` : null);
+            const preview = editingItem?.image_url
+                ? editingItem.image_url.startsWith('http')
+                    ? editingItem.image_url
+                    : `${API_BASE_URL}${editingItem.image_url}`
+                : null;
+            setImagePreview(preview);
             setError('');
         }
-    }, [isOpen, editingItem]);
+    }, [isOpen, editingItem, getInitialState]);
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
+
+        if (name === 'type') {
+            setFormData(prev => ({
+                ...prev,
+                type: value,
+                category: getDefaultCategory(value),
+                price: value === 'sale' || value === 'acquire' ? prev.price : '',
+            }));
+            return;
+        }
+
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
@@ -48,8 +103,20 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         // 使用 FormData 来发送包含文件的表单
         const submissionData = new FormData();
         Object.entries(formData).forEach(([key, value]) => {
+            if (value === null || value === undefined) {
+                return;
+            }
+
+            if (key === 'price' && !(formData.type === 'sale' || formData.type === 'acquire')) {
+                return; // 非交易类帖子不需要价格
+            }
+
             submissionData.append(key, value);
         });
+
+        if (!(formData.type === 'sale' || formData.type === 'acquire')) {
+            submissionData.append('price', 0);
+        }
         
         // 如果是编辑，且没有上传新图片，把现有图片URL传回去
         if (editingItem && !formData.image) {
@@ -121,7 +188,16 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         )}
                         <div>
                             <label className="block text-sm font-medium text-gray-700">分类</label>
-                            <input type="text" name="category" value={formData.category} onChange={handleInputChange} className="w-full mt-1 p-2 border rounded-md" />
+                            <select
+                                name="category"
+                                value={formData.category}
+                                onChange={handleInputChange}
+                                className="w-full mt-1 p-2 border rounded-md"
+                            >
+                                {(CATEGORY_OPTIONS[formData.type] || []).map(option => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                            </select>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">图片</label>
