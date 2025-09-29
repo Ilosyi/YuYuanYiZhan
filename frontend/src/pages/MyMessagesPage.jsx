@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import api, { API_BASE_URL } from '../api';
+import api, { API_BASE_URL, resolveAssetUrl } from '../api';
 import { useAuth } from '../context/AuthContext';
 
 const formatTime = (value) => {
@@ -27,13 +27,8 @@ const buildWebSocketUrl = (token) => {
 
 const resolveImageUrl = (value) => {
     if (!value) return null;
-    if (value.startsWith('http')) return value;
-    try {
-        const base = new URL(API_BASE_URL);
-        return `${base.origin}${value}`;
-    } catch {
-        return value;
-    }
+    const resolved = resolveAssetUrl(value);
+    return resolved || null;
 };
 
 const ListingPreview = ({ listing, onAction, isProcessing }) => {

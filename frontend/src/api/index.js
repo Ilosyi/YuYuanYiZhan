@@ -1,17 +1,57 @@
 import axios from 'axios';
 
-// 根据当前域名动态设置 API 地址
-const getApiBaseUrl = () => {
-    const hostname = window.location.hostname;
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        return 'http://localhost:3000';
-    } else {
-        // 局域网访问时，使用当前设备的 IP
-        return `http://${hostname}:3000`;
-    }
+const sanitizeUrl = (url) => url.replace(/\/$/, '');
+const ABSOLUTE_ASSET_REGEX = /^(?:https?:|data:|blob:)/i;
+
+const ensureLeadingSlash = (value) => {
+    if (!value) return '';
+    return value.startsWith('/') ? value : `/${value}`;
 };
 
-const API_BASE_URL = getApiBaseUrl();
+const getApiBaseUrl = () => {
+    const envUrl = import.meta.env.VITE_API_BASE_URL;
+    if (envUrl && envUrl.trim()) {
+        return sanitizeUrl(envUrl.trim());
+    }
+
+    if (typeof window !== 'undefined') {
+        const { protocol, hostname, port } = window.location;
+
+        if (import.meta.env.DEV) {
+            const devApiPort = import.meta.env.VITE_DEV_API_PORT || '3000';
+            return `${protocol}//${hostname}:${devApiPort}`;
+        }
+
+        if (!port || port === '80' || port === '443') {
+            return `${protocol}//${hostname}`;
+        }
+
+        return `${protocol}//${hostname}:${port}`;
+    }
+
+    return 'http://localhost:3000';
+};
+
+const API_BASE_URL = sanitizeUrl(getApiBaseUrl());
+
+const resolveAssetUrl = (value) => {
+    if (!value) return '';
+    if (ABSOLUTE_ASSET_REGEX.test(value)) {
+        return value;
+    }
+
+    const normalized = ensureLeadingSlash(value);
+
+    try {
+        const base = new URL(API_BASE_URL);
+        return `${base.origin}${normalized}`;
+    } catch (error) {
+        if (typeof window !== 'undefined' && window.location?.origin) {
+            return `${window.location.origin}${normalized}`;
+        }
+        return normalized;
+    }
+};
 
 const api = axios.create({
     baseURL: API_BASE_URL,
@@ -31,5 +71,5 @@ api.interceptors.request.use(
     }
 );
 
-export { API_BASE_URL };
+export { API_BASE_URL, resolveAssetUrl };
 export default api;

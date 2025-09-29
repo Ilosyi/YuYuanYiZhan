@@ -1,7 +1,9 @@
 // frontend/src/components/OrderCard.jsx
 // [请用此版本完全替换]
 import React from 'react';
-import api, { API_BASE_URL } from '../api';
+import api, { resolveAssetUrl } from '../api';
+
+const FALLBACK_IMAGE = 'https://via.placeholder.com/128x128?text=No+Image';
 
 const OrderCard = ({ order, role, onUpdate }) => {
     // ✅ isBuyer 变量直接来自 props.role，确保它与 MyOrdersPage 中的 activeTab 保持一致
@@ -9,7 +11,8 @@ const OrderCard = ({ order, role, onUpdate }) => {
 
     const statusText = { to_pay: '待付款', to_ship: '待发货', to_receive: '待收货', completed: '已完成', cancelled: '已取消' };
     const statusColor = { to_pay: 'bg-red-100 text-red-800', to_ship: 'bg-orange-100 text-orange-800', to_receive: 'bg-blue-100 text-blue-800', completed: 'bg-green-100 text-green-800', cancelled: 'bg-gray-100 text-gray-800' };
-    const imageUrl = order.listing_image_url ? `${API_BASE_URL}${order.listing_image_url}` : 'https://via.placeholder.com/128';
+    const resolvedImage = resolveAssetUrl(order.listing_image_url);
+    const imageUrl = resolvedImage || FALLBACK_IMAGE;
 
     const handleUpdateStatus = async (newStatus) => {
         const actionText = {

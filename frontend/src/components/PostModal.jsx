@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import api, { API_BASE_URL } from '../api';
+import api, { resolveAssetUrl } from '../api';
 
 const CATEGORY_OPTIONS = {
     sale: [
@@ -51,7 +51,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     const [formData, setFormData] = useState(() => getInitialState());
     const [imagePreview, setImagePreview] = useState(() => {
         if (!editingItem?.image_url) return null;
-        return editingItem.image_url.startsWith('http') ? editingItem.image_url : `${API_BASE_URL}${editingItem.image_url}`;
+        return resolveAssetUrl(editingItem.image_url);
     });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
@@ -62,9 +62,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             const initialState = getInitialState();
             setFormData(initialState);
             const preview = editingItem?.image_url
-                ? editingItem.image_url.startsWith('http')
-                    ? editingItem.image_url
-                    : `${API_BASE_URL}${editingItem.image_url}`
+                ? resolveAssetUrl(editingItem.image_url)
                 : null;
             setImagePreview(preview);
             setError('');

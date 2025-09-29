@@ -19,11 +19,42 @@ const { WebSocketServer } = require('ws');
 const app = express();
 const server = http.createServer(app);
 const port = process.env.PORT || 3000;
+const uploadsRoot = path.join(__dirname, 'uploads');
+
+const resolveUploadAbsolutePath = (value) => {
+    if (!value) return null;
+    const sanitized = value.replace(/^[\\/]+/, '');
+    const absolutePath = path.resolve(__dirname, sanitized);
+    const uploadsRootWithSep = `${uploadsRoot}${path.sep}`;
+    if (absolutePath !== uploadsRoot && !absolutePath.startsWith(uploadsRootWithSep)) {
+        return null;
+    }
+    return absolutePath;
+};
 
 // =================================================================
 // 1. 中间件配置 (Middleware Configuration)
 // =================================================================
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.length === 0) {
+            return callback(null, true);
+        }
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -111,7 +142,7 @@ const authenticateToken = (req, res, next) => {
 // =================================================================
 
 // --- 5.1 用户认证路由 (Auth Routes) ---
-app.post('/api/auth/register', async (req, res) => {
+const handleRegister = async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password || password.length < 6) {
         return res.status(400).json({ message: 'Username and password (min 6 chars) are required.' });
@@ -129,7 +160,10 @@ app.post('/api/auth/register', async (req, res) => {
         }
         res.status(500).json({ message: 'Database error', error: error.message });
     }
-});
+};
+
+app.post('/api/auth/register', handleRegister);
+app.post('/api/register', handleRegister);
 
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
@@ -215,8 +249,8 @@ app.put('/api/listings/:id', authenticateToken, upload.single('image'), async (r
 
         // 删除旧图片
         if (req.file && listings[0].image_url) {
-            const oldImagePath = path.join(__dirname, listings[0].image_url);
-            if (fs.existsSync(oldImagePath)) {
+            const oldImagePath = resolveUploadAbsolutePath(listings[0].image_url);
+            if (oldImagePath && fs.existsSync(oldImagePath)) {
                 fs.unlinkSync(oldImagePath);
             }
         }
@@ -250,8 +284,8 @@ app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
         }
 
         if (image_url) {
-            const imagePath = path.join(__dirname, image_url);
-            if (fs.existsSync(imagePath)) {
+            const imagePath = resolveUploadAbsolutePath(image_url);
+            if (imagePath && fs.existsSync(imagePath)) {
                 fs.unlink(imagePath, (err) => {
                     if (err) console.error("Error deleting image file:", err);
                 });
@@ -734,6 +768,32 @@ wss.on('connection', (socket, req) => {
 // =================================================================
 // 7. 启动服务器 (Start Server)
 // =================================================================
+if (process.env.SERVE_FRONTEND === 'true') {
+    const resolveDistPath = () => {
+        if (!process.env.FRONTEND_DIST_PATH) {
+            return path.resolve(__dirname, '../frontend/dist');
+        }
+        return path.isAbsolute(process.env.FRONTEND_DIST_PATH)
+            ? process.env.FRONTEND_DIST_PATH
+            : path.join(__dirname, process.env.FRONTEND_DIST_PATH);
+    };
+
+    const distPath = resolveDistPath();
+
+    if (fs.existsSync(distPath)) {
+        console.log(`[Static] Serving frontend assets from ${distPath}`);
+        app.use(express.static(distPath));
+        app.get('*', (req, res, next) => {
+            if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/ws')) {
+                return next();
+            }
+            res.sendFile(path.join(distPath, 'index.html'));
+        });
+    } else {
+        console.warn(`[Static] SERVE_FRONTEND is enabled but path ${distPath} does not exist.`);
+    }
+}
+
 server.listen(port, '0.0.0.0', () => {
     console.log(`Backend server is running on http://0.0.0.0:${port}`);
     console.log(`Local access: http://localhost:${port}`);

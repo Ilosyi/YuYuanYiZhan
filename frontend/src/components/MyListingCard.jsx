@@ -1,7 +1,8 @@
 // frontend/src/components/MyListingCard.jsx
 import React from 'react';
+import { resolveAssetUrl } from '../api';
 
-const API_BASE_URL = 'http://localhost:3000';
+const FALLBACK_IMAGE = 'https://via.placeholder.com/400x300?text=YuYuanYiZhan';
 
 const MyListingCard = ({ item, onEdit, onDelete }) => {
     const statusText = {
@@ -14,9 +15,8 @@ const MyListingCard = ({ item, onEdit, onDelete }) => {
         in_progress: 'bg-yellow-100 text-yellow-800',
         completed: 'bg-gray-100 text-gray-800'
     };
-    const imageUrl = item.image_url?.startsWith('http')
-        ? item.image_url
-        : `${API_BASE_URL}${item.image_url}`;
+    const resolvedImage = resolveAssetUrl(item.image_url);
+    const imageUrl = resolvedImage || FALLBACK_IMAGE;
 
     return (
         <div className="bg-white rounded-lg shadow-md overflow-hidden flex flex-col">

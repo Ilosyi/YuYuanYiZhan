@@ -2,7 +2,7 @@
 // 版本: 1.1 - 实现动态分类筛选
 
 import React, { useState, useEffect, useCallback } from 'react';
-import api, { API_BASE_URL } from '../api';
+import api, { resolveAssetUrl } from '../api';
 import ListingCard from '../components/ListingCard';
 import { useAuth } from '../context/AuthContext';
 
@@ -55,19 +55,14 @@ const formatDateTime = (value) => {
     }
 };
 
+const FALLBACK_IMAGE = 'https://via.placeholder.com/400x250?text=YuYuanYiZhan';
+
 const resolveImageUrl = (value) => {
-    if (!value) {
-        return 'https://via.placeholder.com/400x250?text=YuYuanYiZhan';
+    const resolved = resolveAssetUrl(value);
+    if (resolved) {
+        return resolved;
     }
-    if (value.startsWith('http')) {
-        return value;
-    }
-    try {
-        const base = new URL(API_BASE_URL);
-        return `${base.origin}${value}`;
-    } catch {
-        return value;
-    }
+    return FALLBACK_IMAGE;
 };
 
 const InfoCard = ({ item, onOpenDetail, onContact, isLostFound }) => {

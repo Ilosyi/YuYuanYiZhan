@@ -1,8 +1,9 @@
 // frontend/src/components/ListingCard.jsx
 import React from 'react';
 import { useAuth } from '../context/AuthContext'; // 1. 导入 useAuth hook
+import { resolveAssetUrl } from '../api';
 
-const API_BASE_URL = 'http://localhost:3000';
+const FALLBACK_IMAGE = 'https://via.placeholder.com/400x300?text=YuYuanYiZhan';
 
 const ListingCard = ({ item, onPurchase, onContact }) => {
     const { user } = useAuth(); // 2. 获取当前登录的用户信息
@@ -11,7 +12,8 @@ const ListingCard = ({ item, onPurchase, onContact }) => {
     const statusColor = { available: 'bg-green-100 text-green-800', in_progress: 'bg-yellow-100 text-yellow-800', completed: 'bg-gray-100 text-gray-800' };
 
     const formattedPrice = `¥${Number(item.price).toLocaleString()}`;
-    const imageUrl = item.image_url?.startsWith('http') ? item.image_url : `${API_BASE_URL}${item.image_url}`;
+    const resolvedImage = resolveAssetUrl(item.image_url);
+    const imageUrl = resolvedImage || FALLBACK_IMAGE;
     
     // ✅ 3. 新增检查：判断当前帖子是否由当前登录用户发布
     const isOwner = user && user.id === item.user_id;
