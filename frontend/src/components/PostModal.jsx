@@ -44,30 +44,95 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             description: editingItem?.description || '',
             price: editingItem?.price || '',
             category: editingItem?.category || getDefaultCategory(initialType),
-            image: null,
         };
     }, [editingItem]);
 
     const [formData, setFormData] = useState(() => getInitialState());
-    const [imagePreview, setImagePreview] = useState(() => {
-        if (!editingItem?.image_url) return null;
-        return resolveAssetUrl(editingItem.image_url);
-    });
+    const [existingImages, setExistingImages] = useState([]);
+    const [newImages, setNewImages] = useState([]);
+    const [isDetailLoading, setIsDetailLoading] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
 
-    // 当编辑项变化时 (打开/切换模态框)，重置表单
+    const MAX_IMAGE_COUNT = 10;
+
+    const resetNewImages = useCallback(() => {
+        setNewImages(prev => {
+            prev.forEach(item => {
+                if (item?.preview) {
+                    URL.revokeObjectURL(item.preview);
+                }
+            });
+            return [];
+        });
+    }, []);
+
+    // 当编辑项变化时 (打开/切换模态框)，重置表单并加载已有图片
     useEffect(() => {
-        if (isOpen) {
-            const initialState = getInitialState();
-            setFormData(initialState);
-            const preview = editingItem?.image_url
-                ? resolveAssetUrl(editingItem.image_url)
-                : null;
-            setImagePreview(preview);
-            setError('');
+        let cancelled = false;
+
+        if (!isOpen) {
+            resetNewImages();
+            setExistingImages([]);
+            return () => {
+                cancelled = true;
+            };
         }
-    }, [isOpen, editingItem, getInitialState]);
+
+        const initialState = getInitialState();
+        setFormData(initialState);
+        setError('');
+        resetNewImages();
+        setExistingImages([]);
+
+        if (editingItem?.id) {
+            setIsDetailLoading(true);
+            api.get(`/api/listings/${editingItem.id}/detail`)
+                .then(({ data }) => {
+                    if (cancelled) return;
+                    const listing = data?.listing;
+                    if (!listing) {
+                        setExistingImages([]);
+                        return;
+                    }
+                    if (Array.isArray(listing.images) && listing.images.length > 0) {
+                        setExistingImages(
+                            listing.images
+                                .filter((image) => image.image_url)
+                                .map((image) => ({
+                                    id: image.id ?? null,
+                                    rawUrl: image.image_url,
+                                }))
+                        );
+                    } else if (listing.image_url) {
+                        setExistingImages([{ id: null, rawUrl: listing.image_url }]);
+                    } else {
+                        setExistingImages([]);
+                    }
+                })
+                .catch((err) => {
+                    console.error('加载帖子详情失败:', err);
+                    if (!cancelled) {
+                        setExistingImages([]);
+                    }
+                })
+                .finally(() => {
+                    if (!cancelled) {
+                        setIsDetailLoading(false);
+                    }
+                });
+        } else {
+            setIsDetailLoading(false);
+        }
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen, editingItem, getInitialState, resetNewImages]);
+
+    useEffect(() => () => {
+        resetNewImages();
+    }, [resetNewImages]);
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
@@ -85,13 +150,50 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
-    const handleImageChange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            setFormData(prev => ({ ...prev, image: file }));
-            setImagePreview(URL.createObjectURL(file));
+    const handleImageChange = useCallback((event) => {
+        const files = Array.from(event.target.files || []);
+        if (!files.length) {
+            return;
         }
-    };
+
+        const availableSlots = MAX_IMAGE_COUNT - existingImages.length - newImages.length;
+        if (availableSlots <= 0) {
+            alert(`最多上传 ${MAX_IMAGE_COUNT} 张图片`);
+            event.target.value = '';
+            return;
+        }
+
+        const selectedFiles = files.slice(0, availableSlots);
+        const mapped = selectedFiles.map((file) => ({
+            file,
+            preview: URL.createObjectURL(file),
+        }));
+
+        setNewImages(prev => [...prev, ...mapped]);
+
+        if (selectedFiles.length < files.length) {
+            alert(`已达到最多 ${MAX_IMAGE_COUNT} 张图片限制，部分图片未添加。`);
+        }
+
+        event.target.value = '';
+    }, [existingImages.length, newImages.length, MAX_IMAGE_COUNT]);
+
+    const handleRemoveExistingImage = useCallback((index) => {
+        setExistingImages(prev => prev.filter((_, idx) => idx !== index));
+    }, []);
+
+    const handleRemoveNewImage = useCallback((index) => {
+        setNewImages(prev => {
+            const next = [...prev];
+            const [removed] = next.splice(index, 1);
+            if (removed?.preview) {
+                URL.revokeObjectURL(removed.preview);
+            }
+            return next;
+        });
+    }, []);
+
+    const totalImages = existingImages.length + newImages.length;
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -101,7 +203,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         // 使用 FormData 来发送包含文件的表单
         const submissionData = new FormData();
         Object.entries(formData).forEach(([key, value]) => {
-            if (value === null || value === undefined) {
+            if (value === null || value === undefined || key === 'image') {
                 return;
             }
 
@@ -115,10 +217,20 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         if (!(formData.type === 'sale' || formData.type === 'acquire')) {
             submissionData.append('price', 0);
         }
-        
-        // 如果是编辑，且没有上传新图片，把现有图片URL传回去
-        if (editingItem && !formData.image) {
-            submissionData.append('existingImageUrl', editingItem.image_url);
+
+        newImages.forEach(({ file }) => {
+            submissionData.append('images', file);
+        });
+
+        if (editingItem) {
+            const keepIds = existingImages
+                .map((image) => image.id)
+                .filter((id) => Number.isInteger(id));
+            submissionData.append('keepImageIds', JSON.stringify(keepIds));
+
+            if (!keepIds.length && existingImages.length > 0 && existingImages[0].rawUrl) {
+                submissionData.append('existingImageUrl', existingImages[0].rawUrl);
+            }
         }
 
         try {
@@ -133,6 +245,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                     headers: { 'Content-Type': 'multipart/form-data' },
                 });
             }
+            resetNewImages();
             onSaveSuccess(); // 通知父组件刷新
             onClose(); // 关闭模态框
         } catch (err) {
@@ -199,15 +312,66 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">图片</label>
-                            <input type="file" name="image" onChange={handleImageChange} accept="image/*" className="w-full mt-1 text-sm" />
-                            {imagePreview && <img src={imagePreview} alt="Preview" className="mt-2 rounded-md max-h-40" />}
+                            <input
+                                type="file"
+                                name="images"
+                                onChange={handleImageChange}
+                                accept="image/*"
+                                multiple
+                                className="w-full mt-1 text-sm"
+                            />
+                            <p className="mt-1 text-xs text-gray-500">
+                                支持 JPG/PNG，最多上传 {MAX_IMAGE_COUNT} 张。已选择 {totalImages} 张。
+                            </p>
+                            {isDetailLoading ? (
+                                <p className="mt-2 text-xs text-gray-400">正在加载已有图片...</p>
+                            ) : (
+                                (existingImages.length > 0 || newImages.length > 0) && (
+                                    <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                        {existingImages.map((image, index) => (
+                                            <div key={`existing-${image.id ?? index}`} className="relative group">
+                                                <img
+                                                    src={resolveAssetUrl(image.rawUrl)}
+                                                    alt={`已上传图片 ${index + 1}`}
+                                                    className="w-full h-32 object-cover rounded-lg border border-gray-200"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveExistingImage(index)}
+                                                    className="absolute top-1 right-1 hidden group-hover:flex items-center justify-center w-7 h-7 rounded-full bg-black/60 text-white text-xs"
+                                                    title="删除"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {newImages.map((image, index) => (
+                                            <div key={`new-${index}`} className="relative group">
+                                                <img
+                                                    src={image.preview}
+                                                    alt={`待上传图片 ${index + 1}`}
+                                                    className="w-full h-32 object-cover rounded-lg border border-gray-200"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveNewImage(index)}
+                                                    className="absolute top-1 right-1 hidden group-hover:flex items-center justify-center w-7 h-7 rounded-full bg-black/60 text-white text-xs"
+                                                    title="删除"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )
+                            )}
                         </div>
                     </div>
 
                     <div className="mt-6 flex justify-end space-x-3">
                         <button type="button" onClick={onClose} className="px-4 py-2 border rounded-md hover:bg-gray-100">取消</button>
-                        <button type="submit" disabled={isLoading} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-indigo-300">
-                            {isLoading ? '保存中...' : '确认发布'}
+                        <button type="submit" disabled={isLoading || isDetailLoading} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-indigo-300">
+                            {isDetailLoading ? '加载图片中...' : isLoading ? '保存中...' : '确认发布'}
                         </button>
                     </div>
                 </form>

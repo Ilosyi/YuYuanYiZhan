@@ -1,7 +1,7 @@
 // frontend/src/pages/HomePage.jsx
 // 版本: 1.1 - 实现动态分类筛选
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api, { resolveAssetUrl } from '../api';
 import ListingCard from '../components/ListingCard';
 import { useAuth } from '../context/AuthContext';
@@ -74,14 +74,18 @@ const InfoCard = ({ item, onOpenDetail, onContact, isLostFound }) => {
         : 'bg-indigo-100 text-indigo-700';
 
     const imageUrl = resolveImageUrl(item.image_url);
+    const hasMultipleImages = Number(item.images_count || item.image_count || 0) > 1;
 
     return (
         <div
             onClick={() => onOpenDetail(item)}
             className="bg-white rounded-xl shadow hover:shadow-lg transition-shadow duration-200 cursor-pointer overflow-hidden"
         >
-            <div className="h-44 bg-gray-100 overflow-hidden">
+            <div className="relative h-44 bg-gray-100 overflow-hidden">
                 <img src={imageUrl} alt={item.title} className="w-full h-full object-cover" />
+                {hasMultipleImages && (
+                    <span className="absolute bottom-2 right-2 px-2 py-0.5 text-xs bg-black/60 text-white rounded-full">多图</span>
+                )}
             </div>
             <div className="p-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
@@ -139,6 +143,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const [detailLoading, setDetailLoading] = useState(false);
     const [detailError, setDetailError] = useState('');
     const [replyContent, setReplyContent] = useState('');
+    const [activeImageIndex, setActiveImageIndex] = useState(0);
 
     useEffect(() => {
         setCategory('all');
@@ -235,6 +240,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
             const { data } = await api.get(`/api/listings/${listingId}/detail`);
             setDetailListing(data.listing);
             setDetailReplies(data.replies || []);
+            setActiveImageIndex(0);
         } catch (err) {
             console.error(err);
             setDetailError(err.response?.data?.message || '详情加载失败，请稍后再试。');
@@ -280,6 +286,26 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    const galleryImages = useMemo(() => {
+        if (!detailListing) return [];
+        if (Array.isArray(detailListing.images) && detailListing.images.length > 0) {
+            return detailListing.images
+                .filter((image) => image?.image_url)
+                .map((image) => ({
+                    id: image.id ?? image.image_url,
+                    url: resolveImageUrl(image.image_url),
+                }));
+        }
+        if (detailListing.image_url) {
+            return [{ id: detailListing.image_url, url: resolveImageUrl(detailListing.image_url) }];
+        }
+        return [];
+    }, [detailListing]);
+
+    useEffect(() => {
+        setActiveImageIndex(0);
+    }, [detailListing?.id, galleryImages.length]);
+
     const currentCategories = CATEGORY_CONFIG[activeMode] || CATEGORY_CONFIG.sale;
 
     const renderContent = () => {
@@ -302,6 +328,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
                             item={item}
                             onPurchase={handlePurchase}
                             onContact={handleContact}
+                            onOpenDetail={openDetail}
                         />
                     ))}
                 </div>
@@ -388,12 +415,43 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                             <span>发布者：{detailListing.owner_name || detailListing.user_name}</span>
                                             <span>发布时间：{formatDateTime(detailListing.created_at)}</span>
                                         </div>
-                                        {detailListing.image_url && (
-                                            <img
-                                                src={detailListing.image_url.startsWith('http') ? detailListing.image_url : `${window.location.origin.replace(':5173', ':3000')}${detailListing.image_url}`}
-                                                alt={detailListing.title}
-                                                className="w-full rounded-lg border border-gray-100"
-                                            />
+                                        {galleryImages.length > 0 && (
+                                            <div className="space-y-3">
+                                                <div className="relative">
+                                                    <img
+                                                        src={galleryImages[Math.min(activeImageIndex, galleryImages.length - 1)]?.url}
+                                                        alt={detailListing.title}
+                                                        className="w-full rounded-lg border border-gray-100 object-cover max-h-96"
+                                                    />
+                                                    {galleryImages.length > 1 && (
+                                                        <span className="absolute top-2 right-2 px-2 py-0.5 text-xs bg-black/60 text-white rounded-full">
+                                                            {activeImageIndex + 1} / {galleryImages.length}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {galleryImages.length > 1 && (
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {galleryImages.map((image, index) => (
+                                                            <button
+                                                                type="button"
+                                                                key={image.id ?? index}
+                                                                onClick={() => setActiveImageIndex(index)}
+                                                                className={`relative w-16 h-16 rounded-lg overflow-hidden border ${
+                                                                    index === activeImageIndex
+                                                                        ? 'border-indigo-500 ring-2 ring-indigo-200'
+                                                                        : 'border-transparent'
+                                                                }`}
+                                                            >
+                                                                <img
+                                                                    src={image.url}
+                                                                    alt={`预览图 ${index + 1}`}
+                                                                    className="w-full h-full object-cover"
+                                                                />
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
                                         )}
                                         <p className="leading-relaxed text-gray-700 whitespace-pre-line">{detailListing.description}</p>
                                     </div>

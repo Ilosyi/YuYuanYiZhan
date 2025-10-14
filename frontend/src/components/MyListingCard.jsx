@@ -17,11 +17,15 @@ const MyListingCard = ({ item, onEdit, onDelete }) => {
     };
     const resolvedImage = resolveAssetUrl(item.image_url);
     const imageUrl = resolvedImage || FALLBACK_IMAGE;
+    const hasMultipleImages = Number(item.images_count || item.image_count || 0) > 1;
 
     return (
         <div className="bg-white rounded-lg shadow-md overflow-hidden flex flex-col">
-            <div className="h-40 bg-gray-200">
+            <div className="relative h-40 bg-gray-200">
                 <img src={imageUrl} alt={item.title} className="w-full h-full object-cover" />
+                {hasMultipleImages && (
+                    <span className="absolute bottom-2 right-2 px-2 py-0.5 text-xs bg-black/60 text-white rounded-full">多图</span>
+                )}
             </div>
             <div className="p-4 flex-grow flex flex-col justify-between">
                 <div>

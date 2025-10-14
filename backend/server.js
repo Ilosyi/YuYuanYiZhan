@@ -32,6 +32,48 @@ const resolveUploadAbsolutePath = (value) => {
     return absolutePath;
 };
 
+const gatherUploadedImages = (req) => {
+    const collected = [];
+    if (req.files?.images?.length) {
+        collected.push(...req.files.images);
+    }
+    if (req.files?.image?.length) {
+        collected.push(...req.files.image);
+    }
+    return collected;
+};
+
+const buildImageUrl = (file) => `/uploads/${file.filename}`;
+
+const deletePhysicalFiles = (imageUrls = []) => {
+    imageUrls.forEach((url) => {
+        const absolute = resolveUploadAbsolutePath(url);
+        if (absolute && fs.existsSync(absolute)) {
+            try {
+                fs.unlinkSync(absolute);
+            } catch (error) {
+                console.error('删除图片文件失败:', absolute, error.message);
+            }
+        }
+    });
+};
+
+const parseKeepImageIds = (rawValue) => {
+    if (!rawValue) return [];
+    try {
+        const parsed = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
+        if (Array.isArray(parsed)) {
+            return parsed
+                .map((value) => Number(value))
+                .filter((value) => Number.isInteger(value) && value > 0);
+        }
+        return [];
+    } catch (error) {
+        console.warn('解析 keepImageIds 失败:', error.message);
+        return [];
+    }
+};
+
 // =================================================================
 // 1. 中间件配置 (Middleware Configuration)
 // =================================================================
@@ -91,8 +133,30 @@ async function initializeDatabase() {
             CONSTRAINT fk_messages_listing FOREIGN KEY (listing_id) REFERENCES listings(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `;
+    const createListingImagesTableSQL = `
+        CREATE TABLE IF NOT EXISTS listing_images (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            listing_id INT NOT NULL,
+            image_url VARCHAR(500) NOT NULL,
+            sort_order INT NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_listing_images_listing FOREIGN KEY (listing_id) REFERENCES listings(id) ON DELETE CASCADE,
+            INDEX idx_listing_order (listing_id, sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `;
     try {
         await pool.execute(createMessagesTableSQL);
+        await pool.execute(createListingImagesTableSQL);
+        await pool.execute(`
+            INSERT INTO listing_images (listing_id, image_url, sort_order)
+            SELECT l.id, l.image_url, 0
+            FROM listings l
+            WHERE l.image_url IS NOT NULL AND l.image_url <> ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM listing_images li
+                  WHERE li.listing_id = l.id AND li.image_url = l.image_url
+              )
+        `);
     } catch (error) {
         console.error('数据库初始化失败:', error.message);
     }
@@ -121,6 +185,11 @@ const upload = multer({
         }
     }
 });
+
+const uploadListingImages = upload.fields([
+    { name: 'images', maxCount: 10 },
+    { name: 'image', maxCount: 1 }
+]);
 
 // =================================================================
 // 4. 认证中间件 (Authentication Middleware)
@@ -191,14 +260,20 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/listings', async (req, res) => {
     try {
         const { type, userId, status, searchTerm, category } = req.query;
-        let sql = 'SELECT * FROM listings WHERE 1=1';
+        let sql = `
+            SELECT l.*, (
+                SELECT COUNT(*) FROM listing_images li WHERE li.listing_id = l.id
+            ) AS images_count
+            FROM listings l
+            WHERE 1=1
+        `;
         const params = [];
-        if (type) { sql += ' AND type = ?'; params.push(type); }
-        if (userId) { sql += ' AND user_id = ?'; params.push(userId); }
-        if (status && status !== 'all') { sql += ' AND status = ?'; params.push(status); }
-        if (searchTerm) { sql += ' AND (title LIKE ? OR description LIKE ?)'; params.push(`%${searchTerm}%`, `%${searchTerm}%`); }
-        if (category && category !== 'all') { sql += ' AND category = ?'; params.push(category); }
-        sql += ' ORDER BY created_at DESC';
+        if (type) { sql += ' AND l.type = ?'; params.push(type); }
+        if (userId) { sql += ' AND l.user_id = ?'; params.push(userId); }
+        if (status && status !== 'all') { sql += ' AND l.status = ?'; params.push(status); }
+        if (searchTerm) { sql += ' AND (l.title LIKE ? OR l.description LIKE ?)'; params.push(`%${searchTerm}%`, `%${searchTerm}%`); }
+        if (category && category !== 'all') { sql += ' AND l.category = ?'; params.push(category); }
+        sql += ' ORDER BY l.created_at DESC';
         const [rows] = await pool.execute(sql, params);
         res.json(rows);
     } catch (err) {
@@ -207,63 +282,137 @@ app.get('/api/listings', async (req, res) => {
 });
 
 // 发布新帖子 (受保护接口)
-app.post('/api/listings', authenticateToken, upload.single('image'), async (req, res) => {
+app.post('/api/listings', authenticateToken, uploadListingImages, async (req, res) => {
     const { title, description, price, category, type } = req.body;
     const { id: userId, username: userName } = req.user;
-    const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    const uploadedImages = gatherUploadedImages(req);
+    const coverImageUrl = uploadedImages.length ? buildImageUrl(uploadedImages[0]) : null;
 
     if (!title || !description || !type) {
         return res.status(400).json({ message: 'Title, description, and type are required.' });
     }
+
+    let connection;
     try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
         const sql = `
             INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        const [result] = await pool.execute(sql, [title, description, price || 0, category, userId, userName, type, imageUrl]);
+        const [result] = await connection.execute(sql, [title, description, price || 0, category, userId, userName, type, coverImageUrl]);
+
+        if (uploadedImages.length) {
+            const placeholders = uploadedImages.map(() => '(?, ?, ?)').join(', ');
+            const values = [];
+            uploadedImages.forEach((file, index) => {
+                values.push(result.insertId, buildImageUrl(file), index);
+            });
+            await connection.execute(
+                `INSERT INTO listing_images (listing_id, image_url, sort_order) VALUES ${placeholders}`,
+                values
+            );
+        }
+
+        await connection.commit();
         res.status(201).json({ message: 'Listing created successfully!', listingId: result.insertId });
     } catch (err) {
+        if (connection) await connection.rollback();
+        deletePhysicalFiles(uploadedImages.map((file) => buildImageUrl(file)));
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    } finally {
+        if (connection) connection.release();
     }
 });
 
 // 更新帖子 (新增 PUT 路由)
-app.put('/api/listings/:id', authenticateToken, upload.single('image'), async (req, res) => {
+app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req, res) => {
     const listingId = req.params.id;
     const { id: userId } = req.user;
     const { title, description, price, category, existingImageUrl } = req.body;
+    let keepImageIds = parseKeepImageIds(req.body.keepImageIds);
+    const uploadedImages = gatherUploadedImages(req);
+    const newImageUrls = uploadedImages.map((file) => buildImageUrl(file));
 
-    let imageUrl = existingImageUrl;
-    if (req.file) {
-        imageUrl = `/uploads/${req.file.filename}`;
-    }
-
+    let connection;
     try {
-        const [listings] = await pool.execute('SELECT * FROM listings WHERE id = ?', [listingId]);
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        const [listings] = await connection.execute('SELECT * FROM listings WHERE id = ?', [listingId]);
         if (listings.length === 0) {
+            await connection.rollback();
             return res.status(404).json({ message: 'Listing not found.' });
         }
         if (listings[0].user_id !== userId) {
+            await connection.rollback();
             return res.status(403).json({ message: 'Forbidden: You do not own this listing.' });
         }
 
-        // 删除旧图片
-        if (req.file && listings[0].image_url) {
-            const oldImagePath = resolveUploadAbsolutePath(listings[0].image_url);
-            if (oldImagePath && fs.existsSync(oldImagePath)) {
-                fs.unlinkSync(oldImagePath);
-            }
+        const [currentImages] = await connection.execute(
+            'SELECT id, image_url, sort_order FROM listing_images WHERE listing_id = ? ORDER BY sort_order, id',
+            [listingId]
+        );
+
+        if (req.body.keepImageIds === undefined) {
+            keepImageIds = currentImages.map((image) => image.id);
         }
+
+        const keepIdSet = new Set(keepImageIds);
+        const imagesToRemove = currentImages.filter((image) => !keepIdSet.has(image.id));
+        const removeIds = imagesToRemove.map((image) => image.id);
+        const removedImageUrls = imagesToRemove.map((image) => image.image_url);
+
+        if (removeIds.length) {
+            const placeholders = removeIds.map(() => '?').join(', ');
+            await connection.execute(
+                `DELETE FROM listing_images WHERE id IN (${placeholders})`,
+                removeIds
+            );
+        }
+
+        let maxSortOrder = currentImages
+            .filter((image) => keepIdSet.has(image.id))
+            .reduce((max, image) => Math.max(max, image.sort_order || 0), -1);
+
+        if (uploadedImages.length) {
+            const placeholders = uploadedImages.map(() => '(?, ?, ?)').join(', ');
+            const values = [];
+            uploadedImages.forEach((file, index) => {
+                values.push(listingId, buildImageUrl(file), maxSortOrder + index + 1);
+            });
+            await connection.execute(
+                `INSERT INTO listing_images (listing_id, image_url, sort_order) VALUES ${placeholders}`,
+                values
+            );
+            maxSortOrder += uploadedImages.length;
+        }
+
+        const [updatedImages] = await connection.execute(
+            'SELECT image_url FROM listing_images WHERE listing_id = ? ORDER BY sort_order, id LIMIT 1',
+            [listingId]
+        );
+        const coverImageUrl = updatedImages.length
+            ? updatedImages[0].image_url
+            : existingImageUrl || null;
 
         const sql = `
             UPDATE listings SET title = ?, description = ?, price = ?, category = ?, image_url = ?
             WHERE id = ? AND user_id = ?
         `;
-        await pool.execute(sql, [title, description, price, category, imageUrl, listingId, userId]);
+        await connection.execute(sql, [title, description, price, category, coverImageUrl, listingId, userId]);
+
+        await connection.commit();
+        deletePhysicalFiles(removedImageUrls);
 
         res.json({ message: 'Listing updated successfully.' });
     } catch (err) {
+        if (connection) await connection.rollback();
+        deletePhysicalFiles(newImageUrls);
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    } finally {
+        if (connection) connection.release();
     }
 });
 
@@ -278,19 +427,26 @@ app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
         }
         const { image_url } = listings[0];
 
+        const [galleryImages] = await pool.execute(
+            'SELECT image_url FROM listing_images WHERE listing_id = ?',
+            [listingId]
+        );
+        const filesToDelete = new Set();
+        if (image_url) {
+            filesToDelete.add(image_url);
+        }
+        galleryImages.forEach((row) => {
+            if (row.image_url) {
+                filesToDelete.add(row.image_url);
+            }
+        });
+
         const [result] = await pool.execute('DELETE FROM listings WHERE id = ? AND user_id = ?', [listingId, userId]);
         if (result.affectedRows === 0) {
             return res.status(404).json({ message: 'Listing not found.' });
         }
 
-        if (image_url) {
-            const imagePath = resolveUploadAbsolutePath(image_url);
-            if (imagePath && fs.existsSync(imagePath)) {
-                fs.unlink(imagePath, (err) => {
-                    if (err) console.error("Error deleting image file:", err);
-                });
-            }
-        }
+        deletePhysicalFiles(Array.from(filesToDelete));
 
         res.json({ message: 'Listing deleted successfully.' });
     } catch (err) {
@@ -313,6 +469,11 @@ app.get('/api/listings/:id/detail', async (req, res) => {
         }
 
         const listing = listings[0];
+        const [images] = await pool.execute(
+            'SELECT id, image_url, sort_order FROM listing_images WHERE listing_id = ? ORDER BY sort_order, id',
+            [listingId]
+        );
+        listing.images = images;
         const [replies] = await pool.execute(`
             SELECT r.id, r.user_id, r.user_name, r.content, r.created_at
             FROM replies r
