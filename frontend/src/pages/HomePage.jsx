@@ -1,9 +1,9 @@
 // frontend/src/pages/HomePage.jsx
-// 版本: 1.1 - 实现动态分类筛选
-
+// 版本: 1.1 - 实现动态分类筛选 + 主页主题化细节
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api, { resolveAssetUrl } from '../api';
 import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
+import { getModuleTheme } from '../constants/moduleThemes';
 import ListingCard from '../components/ListingCard';
 import { useAuth } from '../context/AuthContext';
 
@@ -57,11 +57,11 @@ const formatDateTime = (value) => {
 };
 
 const deriveListingTypeKey = (item, mode) => {
-    if (!item) return mode || 'sale';
-    if (mode === 'lostfound' || item.type === 'lost' || item.type === 'found') {
+    if (!item && mode) return mode || 'sale';
+    if (mode === 'lostfound' || item?.type === 'lost' || item?.type === 'found') {
         return 'lostfound';
     }
-    return item.type || mode || 'sale';
+    return item?.type || mode || 'sale';
 };
 
 const resolveImageUrl = (value, listingType) => {
@@ -72,7 +72,7 @@ const resolveImageUrl = (value, listingType) => {
     return getDefaultListingImage(listingType) || FALLBACK_IMAGE;
 };
 
-const InfoCard = ({ item, onOpenDetail, onContact, isLostFound, mode }) => {
+const InfoCard = ({ item, onOpenDetail, onContact, isLostFound, mode, theme }) => {
     const badgeText = isLostFound ? (item.type === 'found' ? '招领' : '寻物') : item.category;
     const badgeStyle = isLostFound
         ? item.type === 'found'
@@ -122,7 +122,7 @@ const InfoCard = ({ item, onOpenDetail, onContact, isLostFound, mode }) => {
                             e.stopPropagation();
                             onOpenDetail(item);
                         }}
-                        className="px-3 py-1.5 text-sm rounded-md border border-gray-200 hover:border-indigo-300 hover:text-indigo-600"
+                        className={`px-3 py-1.5 text-sm rounded-md border border-gray-200 ${theme?.outlineHoverBorder || ''} ${theme?.outlineHoverText || ''}`}
                     >
                         查看详情
                     </button>
@@ -132,7 +132,7 @@ const InfoCard = ({ item, onOpenDetail, onContact, isLostFound, mode }) => {
                             e.stopPropagation();
                             onContact(item);
                         }}
-                        className="px-3 py-1.5 text-sm rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100"
+                        className={`px-3 py-1.5 text-sm rounded-md border ${theme?.accentBorder || ''} ${theme?.accentPill || ''} hover:opacity-90`}
                     >
                         联系对方
                     </button>
@@ -224,7 +224,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
             return;
         }
 
-            const listingTypeKey = deriveListingTypeKey(item, activeMode);
+        const listingTypeKey = deriveListingTypeKey(item, activeMode);
         try {
             window.localStorage.setItem(
                 'yy_pending_chat',
@@ -236,7 +236,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
                         type: item.type || activeMode,
                         title: item.title,
                         price: item.price,
-                            imageUrl: resolveImageUrl(item.image_url, listingTypeKey),
+                        imageUrl: resolveImageUrl(item.image_url, listingTypeKey),
                         ownerId: item.user_id,
                         ownerName: item.user_name || item.owner_name,
                         source: activeMode,
@@ -353,6 +353,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
                             onPurchase={handlePurchase}
                             onContact={handleContact}
                             onOpenDetail={openDetail}
+                            theme={getModuleTheme(item.type || activeMode)}
                         />
                     ))}
                 </div>
@@ -370,14 +371,38 @@ const HomePage = ({ onNavigate = () => {} }) => {
                         mode={activeMode}
                         onOpenDetail={openDetail}
                         onContact={handleContact}
+                        theme={getModuleTheme(isLostFound ? 'lostfound' : 'help')}
                     />
                 ))}
             </div>
         );
     };
 
+    const theme = getModuleTheme(activeMode);
+
     return (
         <div>
+            {/* 顶部主题横幅 */}
+            <div className="mb-6 rounded-2xl overflow-hidden shadow">
+                <div className={`${theme.headerBg} text-white px-6 py-6 flex items-center justify-between`}>                    
+                    <div className="space-y-1">
+                        <h1 className="text-xl md:text-2xl font-semibold leading-tight flex items-center gap-2">
+                            <span>{theme.icon}</span>
+                            喻园易站 · {MODE_TEXT[activeMode]}
+                        </h1>
+                        <p className="text-white/90 text-sm md:text-base">发现、发布与联系，连接校园内可信的同学交易与互助</p>
+                    </div>
+                    <div className="hidden md:flex items-center gap-2">
+                        <span className="px-3 py-1 rounded-full bg-white/15 text-white/90 text-xs">实时更新</span>
+                        <span className="px-3 py-1 rounded-full bg-white/15 text-white/90 text-xs">当前内容 {listings.length} 条</span>
+                    </div>
+                </div>
+                <div className="bg-white px-6 py-3 text-xs md:text-sm text-gray-600 flex flex-wrap gap-2">
+                    <span className={`px-2 py-1 rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>支持多图上传</span>
+                    <span className={`px-2 py-1 rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>违规内容将被处理</span>
+                    <span className={`px-2 py-1 rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>注意线下见面安全</span>
+                </div>
+            </div>
             <div className="mb-6 bg-white p-4 rounded-lg shadow">
                 <div className="flex flex-col md:flex-row gap-4 items-center">
                     <div className="flex border border-gray-200 rounded-md overflow-hidden">
@@ -387,8 +412,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                 onClick={() => setActiveMode(mode)}
                                 className={`px-4 py-2 text-sm font-medium transition-colors duration-200 ${
                                     activeMode === mode
-                                        ? 'bg-indigo-600 text-white'
-                                        : 'text-gray-600 hover:bg-indigo-50'
+                                        ? getModuleTheme(mode).buttonBg + ' text-white'
+                                        : 'text-gray-600 ' + getModuleTheme(mode).softBg
                                 }`}
                             >
                                 {MODE_TEXT[mode]}
@@ -401,12 +426,12 @@ const HomePage = ({ onNavigate = () => {} }) => {
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             placeholder={`搜索“${MODE_TEXT[activeMode]}”...`}
-                            className="w-full px-4 py-2 border rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                            className={`w-full px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus}`}
                         />
                         <select
                             value={category}
                             onChange={(e) => setCategory(e.target.value)}
-                            className="px-4 py-2 border rounded-md focus:ring-indigo-500 focus:border-indigo-500 bg-white min-w-[140px]"
+                            className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white min-w-[140px]`}
                         >
                             {Object.entries(currentCategories).map(([key, label]) => (
                                 <option key={key} value={key}>{label}</option>

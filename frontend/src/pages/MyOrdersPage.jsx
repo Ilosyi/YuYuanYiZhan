@@ -49,10 +49,17 @@ const MyOrdersPage = () => {
     };
 
     return (
-        <div>
-            <h2 className="text-3xl font-bold text-gray-800 mb-6">我的订单</h2>
-            
-            <div className="border-b border-gray-200 mb-6">
+        <div className="min-h-full bg-gradient-to-b from-gray-50 to-white">
+            {/* Header */}
+            <div className="mb-6 bg-white rounded-xl shadow p-5">
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                    <span>🧾</span>
+                    我的订单
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">查看你买到的与卖出的订单，支持状态筛选与实时更新。</p>
+            </div>
+
+            <div className="border-b border-gray-200 mb-6 bg-white rounded-xl shadow px-4">
                 <nav className="-mb-px flex space-x-8">
                     <button
                         onClick={() => handleTabClick('buyer')}
@@ -76,7 +83,7 @@ const MyOrdersPage = () => {
             <div className="flex flex-wrap gap-2 mb-6">
                 {Object.entries(statuses).map(([key, value]) => (
                     <button key={key} onClick={() => setFilterStatus(key)} 
-                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterStatus === key ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterStatus === key ? 'bg-indigo-600 text-white shadow' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
                         {value}
                     </button>
                 ))}
@@ -89,7 +96,10 @@ const MyOrdersPage = () => {
                         {orders.map(order => <OrderCard key={order.id} order={order} role={activeTab} onUpdate={fetchOrders} />)}
                     </div>
                 ) : (
-                    <p className="text-center text-gray-500 mt-10">这里空空如也~</p>
+                    <div className="text-center text-gray-500 mt-10">
+                        <div className="text-5xl mb-3">📭</div>
+                        <p>这里空空如也~</p>
+                    </div>
                 )
             )}
         </div>

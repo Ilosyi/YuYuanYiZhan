@@ -503,7 +503,7 @@ const MyMessagesPage = () => {
 
     if (!userId) {
         return (
-            <div className="space-y-6">
+            <div className="min-h-[70vh] bg-gradient-to-b from-gray-50 to-white space-y-6">
                 <div className="flex items-center justify-between">
                     <h2 className="text-3xl font-bold text-gray-800">消息中心</h2>
                 </div>
@@ -515,7 +515,7 @@ const MyMessagesPage = () => {
     }
 
     return (
-        <div className="space-y-6">
+        <div className="min-h-[70vh] bg-gradient-to-b from-gray-50 to-white space-y-6">
             <div className="flex items-center justify-between">
                 <h2 className="text-3xl font-bold text-gray-800">消息中心</h2>
                 <span className={`text-sm ${wsConnected ? 'text-emerald-600' : 'text-gray-400'}`}>

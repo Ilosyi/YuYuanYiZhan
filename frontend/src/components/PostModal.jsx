@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api, { resolveAssetUrl } from '../api';
+import { getModuleTheme } from '../constants/moduleThemes';
 
 const CATEGORY_OPTIONS = {
     sale: [
@@ -261,55 +262,85 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     // 根据类型决定是否显示价格字段
     const showPriceField = formData.type === 'sale' || formData.type === 'acquire';
 
+    const theme = getModuleTheme(formData.type);
+
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-lg max-w-lg w-full max-h-screen overflow-y-auto">
-                <form onSubmit={handleSubmit} className="p-6">
-                    <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-xl font-bold">{editingItem ? '编辑' : '发布'}内容</h3>
-                        <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600">&times;</button>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden">
+                {/* Header */}
+                <div className={`${theme.headerBg} ${theme.headerText} px-6 py-4 flex items-center justify-between`}>
+                    <div className="flex items-center gap-2">
+                        <span className="text-2xl leading-none">{theme.icon}</span>
+                        <h3 className="text-lg font-semibold">{theme.title}</h3>
                     </div>
+                    <button type="button" onClick={onClose} className="text-white/80 hover:text-white text-xl leading-none">×</button>
+                </div>
 
-                    {error && <p className="text-red-500 bg-red-100 p-3 rounded-md mb-4">{error}</p>}
-                    
+                <form onSubmit={handleSubmit} className="p-6">
+                    {/* type / category quick pill */}
+                    <div className="mb-5 flex items-center gap-2">
+                        <span className={`px-2 py-1 text-xs rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>类型</span>
+                        <select name="type" value={formData.type} onChange={handleInputChange} className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}>
+                            <option value="sale">出售商品</option>
+                            <option value="acquire">收购需求</option>
+                            <option value="help">帮帮忙</option>
+                            <option value="lostfound">失物招领</option>
+                        </select>
+                        <span className={`ml-3 px-2 py-1 text-xs rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>{theme.categoryLabel}</span>
+                        <select
+                            name="category"
+                            value={formData.category}
+                            onChange={handleInputChange}
+                            className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                        >
+                            {(CATEGORY_OPTIONS[formData.type] || []).map(option => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                        </select>
+                    </div>
+                    {error && <p className="text-red-600 bg-red-50 border border-red-200 p-3 rounded-md mb-4">{error}</p>}
+
                     <div className="space-y-4">
-                        {/* 字段... */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">类型*</label>
-                            <select name="type" value={formData.type} onChange={handleInputChange} className="w-full mt-1 p-2 border rounded-md">
-                                <option value="sale">出售商品</option>
-                                <option value="acquire">收购需求</option>
-                                <option value="help">帮帮忙</option>
-                                <option value="lostfound">失物招领</option>
-                            </select>
-                        </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">标题*</label>
-                            <input type="text" name="title" value={formData.title} onChange={handleInputChange} required className="w-full mt-1 p-2 border rounded-md" />
+                            <input
+                                type="text"
+                                name="title"
+                                value={formData.title}
+                                placeholder={theme.titlePlaceholder}
+                                onChange={handleInputChange}
+                                required
+                                className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                            />
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">详细内容*</label>
-                            <textarea name="description" value={formData.description} onChange={handleInputChange} required rows="4" className="w-full mt-1 p-2 border rounded-md"></textarea>
+                            <textarea
+                                name="description"
+                                value={formData.description}
+                                onChange={handleInputChange}
+                                placeholder={theme.descPlaceholder}
+                                required
+                                rows="4"
+                                className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                            ></textarea>
+                            <p className="mt-1 text-xs text-gray-500">{theme.descHelp}</p>
                         </div>
                         {showPriceField && (
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">价格* (元)</label>
-                                <input type="number" name="price" value={formData.price} onChange={handleInputChange} required min="0" step="0.01" className="w-full mt-1 p-2 border rounded-md" />
+                                <label className="block text-sm font-medium text-gray-700">{theme.priceLabel || '价格 (元)'}</label>
+                                <input
+                                    type="number"
+                                    name="price"
+                                    value={formData.price}
+                                    onChange={handleInputChange}
+                                    required
+                                    min="0"
+                                    step="0.01"
+                                    className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                />
                             </div>
                         )}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">分类</label>
-                            <select
-                                name="category"
-                                value={formData.category}
-                                onChange={handleInputChange}
-                                className="w-full mt-1 p-2 border rounded-md"
-                            >
-                                {(CATEGORY_OPTIONS[formData.type] || []).map(option => (
-                                    <option key={option.value} value={option.value}>{option.label}</option>
-                                ))}
-                            </select>
-                        </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">图片</label>
                             <input
@@ -318,11 +349,9 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                                 onChange={handleImageChange}
                                 accept="image/*"
                                 multiple
-                                className="w-full mt-1 text-sm"
+                                className={`w-full mt-1 text-sm`}
                             />
-                            <p className="mt-1 text-xs text-gray-500">
-                                支持 JPG/PNG，最多上传 {MAX_IMAGE_COUNT} 张。已选择 {totalImages} 张。
-                            </p>
+                            <p className="mt-1 text-xs text-gray-500">{theme.imageHelp} 已选择 {totalImages} 张（最多 {MAX_IMAGE_COUNT} 张）。</p>
                             {isDetailLoading ? (
                                 <p className="mt-2 text-xs text-gray-400">正在加载已有图片...</p>
                             ) : (
@@ -370,7 +399,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
 
                     <div className="mt-6 flex justify-end space-x-3">
                         <button type="button" onClick={onClose} className="px-4 py-2 border rounded-md hover:bg-gray-100">取消</button>
-                        <button type="submit" disabled={isLoading || isDetailLoading} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-indigo-300">
+                        <button type="submit" disabled={isLoading || isDetailLoading} className={`px-4 py-2 ${theme.buttonBg} ${theme.buttonText} rounded-md disabled:opacity-60`}>
                             {isDetailLoading ? '加载图片中...' : isLoading ? '保存中...' : '确认发布'}
                         </button>
                     </div>

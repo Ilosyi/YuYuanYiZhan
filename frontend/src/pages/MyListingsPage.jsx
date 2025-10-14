@@ -52,10 +52,17 @@ const MyListingsPage = ({ currentUser, onEditListing }) => {
     };
 
     return (
-        <div>
-            <div className="flex justify-between items-center mb-6">
-                <h2 className="text-3xl font-bold text-gray-800">我的发布</h2>
-                <button onClick={() => onEditListing(null)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">发布新内容</button>
+        <div className="min-h-full bg-gradient-to-b from-gray-50 to-white">
+            {/* Header */}
+            <div className="mb-6 bg-white rounded-xl shadow p-5 flex items-center justify-between">
+                <div>
+                    <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <span>🗂️</span>
+                        我的发布
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-500">管理你发布的出售、收购与信息贴，支持筛选与快速编辑。</p>
+                </div>
+                <button onClick={() => onEditListing(null)} className="px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 shadow">发布新内容</button>
             </div>
             
             {/* ✅ 新增：类型筛选栏 */}
@@ -63,7 +70,7 @@ const MyListingsPage = ({ currentUser, onEditListing }) => {
                 <span className="self-center text-sm font-medium text-gray-600">类型:</span>
                 {Object.entries(types).map(([key, value]) => (
                     <button key={key} onClick={() => setFilterType(key)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterType === key ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterType === key ? 'bg-indigo-600 text-white shadow' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
                         {value}
                     </button>
                 ))}
@@ -74,7 +81,7 @@ const MyListingsPage = ({ currentUser, onEditListing }) => {
                 <span className="self-center text-sm font-medium text-gray-600">状态:</span>
                 {Object.entries(statuses).map(([key, value]) => (
                     <button key={key} onClick={() => setFilterStatus(key)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterStatus === key ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${filterStatus === key ? 'bg-indigo-600 text-white shadow' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
                         {value}
                     </button>
                 ))}
@@ -88,7 +95,12 @@ const MyListingsPage = ({ currentUser, onEditListing }) => {
                             <MyListingCard key={item.id} item={item} onEdit={() => onEditListing(item)} onDelete={() => handleDelete(item.id)} />
                         ))}
                     </div>
-                ) : <p className="text-center text-gray-500 mt-10">你还没有发布任何内容。</p>
+                ) : (
+                    <div className="text-center text-gray-500 mt-10">
+                        <div className="text-5xl mb-3">📭</div>
+                        <p>你还没有发布任何内容。</p>
+                    </div>
+                )
             )}
         </div>
     );

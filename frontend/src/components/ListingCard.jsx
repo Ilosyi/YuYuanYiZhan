@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'; // 1. 导入 useAuth hook
 import { resolveAssetUrl } from '../api';
 import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 
-const ListingCard = ({ item, onPurchase, onContact, onOpenDetail }) => {
+const ListingCard = ({ item, onPurchase, onContact, onOpenDetail, theme }) => {
     const { user } = useAuth(); // 2. 获取当前登录的用户信息
 
     const statusText = { available: '上架中', in_progress: '交易中', completed: '已售出' };
@@ -62,7 +62,7 @@ const ListingCard = ({ item, onPurchase, onContact, onOpenDetail }) => {
                 <div className="mt-auto">
                     {hasNumericPrice && (
                         <div className="flex justify-between items-center">
-                            <span className="text-xl font-bold text-indigo-600">{formattedPrice}</span>
+                            <span className={`text-xl font-bold ${theme?.priceText || 'text-indigo-600'}`}>{formattedPrice}</span>
                             {!isAvailable && (
                                 <div className="px-3 py-1 bg-gray-200 text-gray-500 text-sm rounded-md">{statusText[item.status]}</div>
                             )}
@@ -74,7 +74,7 @@ const ListingCard = ({ item, onPurchase, onContact, onOpenDetail }) => {
                         {canPurchase && (
                             <button
                                 onClick={() => onPurchase(item)}
-                                className="px-3 py-1 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700"
+                                className={`px-3 py-1 text-sm rounded-md ${theme?.buttonBg || 'bg-indigo-600 hover:bg-indigo-700'} text-white`}
                             >
                                 立即购买
                             </button>
@@ -82,7 +82,7 @@ const ListingCard = ({ item, onPurchase, onContact, onOpenDetail }) => {
                         {canContact && (
                             <button
                                 onClick={() => onContact(item)}
-                                className="px-3 py-1 border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50"
+                                className={`px-3 py-1 text-sm rounded-md border border-gray-300 text-gray-700 ${theme?.outlineHoverBorder || ''} ${theme?.outlineHoverText || ''}`}
                             >
                                 联系对方
                             </button>
@@ -90,7 +90,7 @@ const ListingCard = ({ item, onPurchase, onContact, onOpenDetail }) => {
                         {showDetailButton && (
                             <button
                                 onClick={handleOpenDetail}
-                                className="px-3 py-1 text-sm rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200"
+                                className={`px-3 py-1 text-sm rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200`}
                             >
                                 查看详情
                             </button>
