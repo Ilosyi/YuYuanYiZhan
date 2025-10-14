@@ -2,8 +2,7 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext'; // 1. 导入 useAuth hook
 import { resolveAssetUrl } from '../api';
-
-const FALLBACK_IMAGE = 'https://via.placeholder.com/400x300?text=YuYuanYiZhan';
+import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 
 const ListingCard = ({ item, onPurchase, onContact, onOpenDetail }) => {
     const { user } = useAuth(); // 2. 获取当前登录的用户信息
@@ -17,7 +16,7 @@ const ListingCard = ({ item, onPurchase, onContact, onOpenDetail }) => {
     const isZeroPrice = hasNumericPrice && numericPrice === 0;
     const formattedPrice = hasNumericPrice ? `¥${numericPrice.toLocaleString()}` : '';
     const resolvedImage = resolveAssetUrl(item.image_url);
-    const imageUrl = resolvedImage || FALLBACK_IMAGE;
+    const imageUrl = resolvedImage || getDefaultListingImage(item.type) || FALLBACK_IMAGE;
     const hasMultipleImages = Number(item.images_count || item.image_count || 0) > 1;
     const showDetailButton = Boolean(onOpenDetail);
     

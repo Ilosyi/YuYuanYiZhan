@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api, { resolveAssetUrl } from '../api';
+import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 import ListingCard from '../components/ListingCard';
 import { useAuth } from '../context/AuthContext';
 
@@ -55,17 +56,23 @@ const formatDateTime = (value) => {
     }
 };
 
-const FALLBACK_IMAGE = 'https://via.placeholder.com/400x250?text=YuYuanYiZhan';
+const deriveListingTypeKey = (item, mode) => {
+    if (!item) return mode || 'sale';
+    if (mode === 'lostfound' || item.type === 'lost' || item.type === 'found') {
+        return 'lostfound';
+    }
+    return item.type || mode || 'sale';
+};
 
-const resolveImageUrl = (value) => {
+const resolveImageUrl = (value, listingType) => {
     const resolved = resolveAssetUrl(value);
     if (resolved) {
         return resolved;
     }
-    return FALLBACK_IMAGE;
+    return getDefaultListingImage(listingType) || FALLBACK_IMAGE;
 };
 
-const InfoCard = ({ item, onOpenDetail, onContact, isLostFound }) => {
+const InfoCard = ({ item, onOpenDetail, onContact, isLostFound, mode }) => {
     const badgeText = isLostFound ? (item.type === 'found' ? '招领' : '寻物') : item.category;
     const badgeStyle = isLostFound
         ? item.type === 'found'
@@ -73,7 +80,8 @@ const InfoCard = ({ item, onOpenDetail, onContact, isLostFound }) => {
             : 'bg-orange-100 text-orange-700'
         : 'bg-indigo-100 text-indigo-700';
 
-    const imageUrl = resolveImageUrl(item.image_url);
+    const fallbackType = deriveListingTypeKey(item, mode);
+    const imageUrl = resolveImageUrl(item.image_url, fallbackType);
     const hasMultipleImages = Number(item.images_count || item.image_count || 0) > 1;
 
     return (
@@ -82,7 +90,15 @@ const InfoCard = ({ item, onOpenDetail, onContact, isLostFound }) => {
             className="bg-white rounded-xl shadow hover:shadow-lg transition-shadow duration-200 cursor-pointer overflow-hidden"
         >
             <div className="relative h-44 bg-gray-100 overflow-hidden">
-                <img src={imageUrl} alt={item.title} className="w-full h-full object-cover" />
+                <img
+                    src={imageUrl}
+                    alt={item.title}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                        e.target.onerror = null;
+                        e.target.src = getDefaultListingImage(fallbackType) || FALLBACK_IMAGE;
+                    }}
+                />
                 {hasMultipleImages && (
                     <span className="absolute bottom-2 right-2 px-2 py-0.5 text-xs bg-black/60 text-white rounded-full">多图</span>
                 )}
@@ -208,6 +224,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
             return;
         }
 
+            const listingTypeKey = deriveListingTypeKey(item, activeMode);
         try {
             window.localStorage.setItem(
                 'yy_pending_chat',
@@ -219,7 +236,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
                         type: item.type || activeMode,
                         title: item.title,
                         price: item.price,
-                        imageUrl: resolveImageUrl(item.image_url),
+                            imageUrl: resolveImageUrl(item.image_url, listingTypeKey),
                         ownerId: item.user_id,
                         ownerName: item.user_name || item.owner_name,
                         source: activeMode,
@@ -288,19 +305,26 @@ const HomePage = ({ onNavigate = () => {} }) => {
 
     const galleryImages = useMemo(() => {
         if (!detailListing) return [];
+        const listingTypeKey = deriveListingTypeKey(detailListing, detailListing?.type || activeMode);
+
         if (Array.isArray(detailListing.images) && detailListing.images.length > 0) {
             return detailListing.images
                 .filter((image) => image?.image_url)
                 .map((image) => ({
                     id: image.id ?? image.image_url,
-                    url: resolveImageUrl(image.image_url),
+                    url: resolveImageUrl(image.image_url, listingTypeKey),
                 }));
         }
         if (detailListing.image_url) {
-            return [{ id: detailListing.image_url, url: resolveImageUrl(detailListing.image_url) }];
+            return [{ id: detailListing.image_url, url: resolveImageUrl(detailListing.image_url, listingTypeKey) }];
         }
         return [];
-    }, [detailListing]);
+    }, [detailListing, activeMode]);
+
+    const detailImageFallbackType = useMemo(() => {
+        if (!detailListing) return deriveListingTypeKey(null, activeMode);
+        return deriveListingTypeKey(detailListing, detailListing?.type || activeMode);
+    }, [detailListing, activeMode]);
 
     useEffect(() => {
         setActiveImageIndex(0);
@@ -343,6 +367,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
                         key={item.id}
                         item={item}
                         isLostFound={isLostFound}
+                        mode={activeMode}
                         onOpenDetail={openDetail}
                         onContact={handleContact}
                     />
@@ -422,6 +447,10 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                                         src={galleryImages[Math.min(activeImageIndex, galleryImages.length - 1)]?.url}
                                                         alt={detailListing.title}
                                                         className="w-full rounded-lg border border-gray-100 object-cover max-h-96"
+                                                        onError={(e) => {
+                                                            e.target.onerror = null;
+                                                            e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
+                                                        }}
                                                     />
                                                     {galleryImages.length > 1 && (
                                                         <span className="absolute top-2 right-2 px-2 py-0.5 text-xs bg-black/60 text-white rounded-full">
@@ -446,6 +475,10 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                                                     src={image.url}
                                                                     alt={`预览图 ${index + 1}`}
                                                                     className="w-full h-full object-cover"
+                                                                    onError={(e) => {
+                                                                        e.target.onerror = null;
+                                                                        e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
+                                                                    }}
                                                                 />
                                                             </button>
                                                         ))}
