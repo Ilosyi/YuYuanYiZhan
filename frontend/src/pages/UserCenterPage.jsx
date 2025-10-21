@@ -8,7 +8,7 @@ import { getModuleTheme } from '../constants/moduleThemes';
 import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 import { useAuth } from '../context/AuthContext';
 
-const DEFAULT_AVATAR = 'https://via.placeholder.com/160x160.png?text=Avatar';
+const DEFAULT_AVATAR = resolveAssetUrl('/default-images/default-avatar.jpg');
 
 const emptyProfile = {
     displayName: '',

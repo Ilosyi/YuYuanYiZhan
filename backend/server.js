@@ -20,6 +20,10 @@ const app = express();
 const server = http.createServer(app);
 const port = process.env.PORT || 3000;
 const uploadsRoot = path.join(__dirname, 'uploads');
+const defaultImagesRoot = path.join(__dirname, '..', 'frontend', 'public', 'default-images');
+const DEFAULT_AVATAR_URL = '/default-images/default-avatar.jpg';
+
+const withAvatarFallback = (value) => value || DEFAULT_AVATAR_URL;
 
 const resolveUploadAbsolutePath = (value) => {
     if (!value) return null;
@@ -102,6 +106,7 @@ app.options('*', cors(corsOptions));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/default-images', express.static(defaultImagesRoot));
 
 // =================================================================
 // 2. 数据库连接池 (Database Pool)
@@ -305,7 +310,7 @@ const getUserProfileSnapshot = async (targetUserId, currentUserId = null) => {
             displayName: profile?.display_name || null,
             studentId: profile?.student_id || null,
             contactPhone: profile?.contact_phone || null,
-            avatarUrl: profile?.avatar_url || null,
+            avatarUrl: withAvatarFallback(profile?.avatar_url),
             bio: profile?.bio || null,
             updatedAt: profile?.updated_at || null
         },
@@ -352,7 +357,7 @@ const buildFollowList = async (targetUserId, currentUserId, mode = 'followers') 
         id: row.user_id,
         username: row.username,
         displayName: row.display_name || null,
-        avatarUrl: row.avatar_url || null,
+        avatarUrl: withAvatarFallback(row.avatar_url),
         bio: row.bio || null,
         followedAt: row.relation_created_at,
         isFollowedByCurrentUser: Boolean(row.is_followed_by_current),
@@ -666,7 +671,7 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
             displayName: row.display_name || null,
             studentId: row.student_id || null,
             contactPhone: row.contact_phone || null,
-            avatarUrl: row.avatar_url || null,
+            avatarUrl: withAvatarFallback(row.avatar_url),
             bio: row.bio || null,
             stats: {
                 following: Number(row.following_count || 0),
