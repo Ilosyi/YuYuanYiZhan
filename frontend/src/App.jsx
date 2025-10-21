@@ -106,7 +106,7 @@ function MainApp() {
           case 'myListings': 
               return <MyListingsPage key={refreshTrigger} currentUser={user} onEditListing={handleOpenModal} />;
           case 'myOrders': 
-              return <MyOrdersPage key={refreshTrigger} currentUser={user} />;
+              return <MyOrdersPage key={refreshTrigger} currentUser={user} onNavigate={setActiveNav} />;
           case 'messages': 
               return <MyMessagesPage currentUser={user} />;
           case 'userCenter':

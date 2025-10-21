@@ -1016,7 +1016,7 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
     }
     try {
         let sql = `
-            SELECT o.*, l.title as listing_title, l.image_url as listing_image_url,
+            SELECT o.*, l.title as listing_title, l.image_url as listing_image_url, l.type as listing_type,
             u_buyer.username as buyer_name, u_seller.username as seller_name
             FROM orders o
             JOIN listings l ON o.listing_id = l.id

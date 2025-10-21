@@ -2,17 +2,25 @@
 // [请用此版本完全替换]
 import React from 'react';
 import api, { resolveAssetUrl } from '../api';
+import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 
-const FALLBACK_IMAGE = 'https://via.placeholder.com/128x128?text=No+Image';
+const deriveListingTypeKey = (rawType) => {
+    if (!rawType) return 'sale';
+    if (rawType === 'lost' || rawType === 'found' || rawType === 'lostfound') return 'lostfound';
+    if (rawType === 'help') return 'help';
+    if (rawType === 'acquire') return 'acquire';
+    return rawType || 'sale';
+};
 
-const OrderCard = ({ order, role, onUpdate }) => {
+const OrderCard = ({ order, role, onUpdate, onContact = () => {} }) => {
     // ✅ isBuyer 变量直接来自 props.role，确保它与 MyOrdersPage 中的 activeTab 保持一致
     const isBuyer = role === 'buyer'; 
 
     const statusText = { to_pay: '待付款', to_ship: '待发货', to_receive: '待收货', completed: '已完成', cancelled: '已取消' };
     const statusColor = { to_pay: 'bg-red-100 text-red-800', to_ship: 'bg-orange-100 text-orange-800', to_receive: 'bg-blue-100 text-blue-800', completed: 'bg-green-100 text-green-800', cancelled: 'bg-gray-100 text-gray-800' };
+    const listingTypeKey = deriveListingTypeKey(order.listing_type);
     const resolvedImage = resolveAssetUrl(order.listing_image_url);
-    const imageUrl = resolvedImage || FALLBACK_IMAGE;
+    const imageUrl = resolvedImage || getDefaultListingImage(listingTypeKey) || FALLBACK_IMAGE;
 
     const handleUpdateStatus = async (newStatus) => {
         const actionText = {
@@ -86,7 +94,12 @@ const OrderCard = ({ order, role, onUpdate }) => {
                         {renderActionButtons()}
                         {/* 仅在订单未完成/未取消时显示“联系对方”按钮 */}
                         {order.status !== 'completed' && order.status !== 'cancelled' && (
-                           <button className="px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50">联系对方</button>
+                           <button
+                                onClick={() => onContact(order, role)}
+                                className="px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50"
+                           >
+                                联系对方
+                           </button>
                         )}
                     </div>
                 </div>

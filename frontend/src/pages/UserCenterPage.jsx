@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api, { resolveAssetUrl } from '../api';
 import ListingCard from '../components/ListingCard';
 import { getModuleTheme } from '../constants/moduleThemes';
+import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 import { useAuth } from '../context/AuthContext';
 
 const DEFAULT_AVATAR = 'https://via.placeholder.com/160x160.png?text=Avatar';
@@ -14,6 +15,25 @@ const emptyProfile = {
     studentId: '',
     contactPhone: '',
     bio: '',
+};
+
+const deriveListingTypeKey = (item) => {
+    if (!item) return 'sale';
+    const type = item.type || item.listingType;
+    if (type === 'lost' || type === 'found' || type === 'lostfound') {
+        return 'lostfound';
+    }
+    if (type === 'help') return 'help';
+    if (type === 'acquire') return 'acquire';
+    return type || 'sale';
+};
+
+const resolveListingImageUrl = (value, listingType) => {
+    const resolved = resolveAssetUrl(value);
+    if (resolved) {
+        return resolved;
+    }
+    return getDefaultListingImage(listingType) || FALLBACK_IMAGE;
 };
 
 const formatDateTime = (value) => {
@@ -417,6 +437,56 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
         }
     };
 
+    const handleContactViewedListing = useCallback((listing) => {
+        if (!effectiveUser) {
+            setFeedback('请先登录后再联系对方。');
+            return;
+        }
+        if (!listing) {
+            setFeedback('暂时无法处理该帖子。');
+            return;
+        }
+
+        const ownerId = listing.user_id || listing.owner_id || viewedUser?.id;
+        if (!ownerId) {
+            setFeedback('无法获取发布者信息。');
+            return;
+        }
+        if (ownerId === effectiveUser.id) {
+            setFeedback('这是您自己发布的内容。');
+            return;
+        }
+
+        const ownerName = listing.user_name || listing.owner_name || viewedUser?.profile?.displayName || viewedUser?.username || '对方';
+        const typeKey = deriveListingTypeKey(listing);
+        const imageUrl = resolveListingImageUrl(listing.image_url, typeKey);
+
+        try {
+            window.localStorage.setItem(
+                'yy_pending_chat',
+                JSON.stringify({
+                    userId: ownerId,
+                    username: ownerName,
+                    listing: {
+                        id: listing.id,
+                        type: listing.type || typeKey,
+                        title: listing.title,
+                        price: listing.price,
+                        imageUrl,
+                        ownerId,
+                        ownerName,
+                        source: 'user-center-view',
+                    },
+                })
+            );
+            setFeedback('');
+        } catch (storageError) {
+            console.warn('无法记录待跳转的会话。', storageError);
+        }
+
+        onNavigate('messages');
+    }, [effectiveUser, onNavigate, viewedUser]);
+
     const handleToggleFavorite = async (item, shouldFavorite) => {
         if (!item?.id) return;
         try {
@@ -797,6 +867,7 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
                                         item={item}
                                         isFavorited={favoriteIdSet.has(item.id)}
                                         onToggleFavorite={handleToggleFavorite}
+                                        onContact={handleContactViewedListing}
                                         theme={getModuleTheme(item.type || 'sale')}
                                     />
                                 ))}

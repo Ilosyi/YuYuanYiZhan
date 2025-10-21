@@ -1,11 +1,20 @@
 // frontend/src/pages/MyOrdersPage.jsx
 // [请用此版本完全替换]
 import React, { useState, useEffect, useCallback } from 'react';
-import api from '../api';
+import api, { resolveAssetUrl } from '../api';
 import { useAuth } from '../context/AuthContext';
 import OrderCard from '../components/OrderCard';
+import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 
-const MyOrdersPage = () => {
+const deriveListingTypeKey = (rawType) => {
+    if (!rawType) return 'sale';
+    if (rawType === 'lost' || rawType === 'found' || rawType === 'lostfound') return 'lostfound';
+    if (rawType === 'help') return 'help';
+    if (rawType === 'acquire') return 'acquire';
+    return rawType || 'sale';
+};
+
+const MyOrdersPage = ({ currentUser, onNavigate = () => {} }) => {
     const { user } = useAuth();
     const [orders, setOrders] = useState([]);
     const [activeTab, setActiveTab] = useState('buyer'); // 'buyer' or 'seller'
@@ -47,6 +56,56 @@ const MyOrdersPage = () => {
         setActiveTab(tab);
         setFilterStatus('all'); // 切换标签时重置状态筛选
     };
+
+    const handleContact = useCallback((order, roleKey) => {
+        if (!user) {
+            alert('请先登录后再联系对方。');
+            return;
+        }
+        if (!order) {
+            alert('暂时无法处理该订单。');
+            return;
+        }
+
+        const counterpartId = roleKey === 'buyer' ? order.seller_id : order.buyer_id;
+        const counterpartName = roleKey === 'buyer' ? order.seller_name : order.buyer_name;
+
+        if (!counterpartId) {
+            alert('无法获取对方信息。');
+            return;
+        }
+        if (counterpartId === user.id) {
+            alert('这是您自己的订单记录。');
+            return;
+        }
+
+        const listingTypeKey = deriveListingTypeKey(order.listing_type);
+        const imageUrl = resolveAssetUrl(order.listing_image_url) || getDefaultListingImage(listingTypeKey) || FALLBACK_IMAGE;
+
+        try {
+            window.localStorage.setItem(
+                'yy_pending_chat',
+                JSON.stringify({
+                    userId: counterpartId,
+                    username: counterpartName,
+                    listing: {
+                        id: order.listing_id,
+                        type: order.listing_type || listingTypeKey,
+                        title: order.listing_title,
+                        price: order.price,
+                        imageUrl,
+                        ownerId: order.seller_id,
+                        ownerName: order.seller_name,
+                        source: 'orders',
+                    },
+                })
+            );
+        } catch (storageError) {
+            console.warn('无法记录待跳转的会话。', storageError);
+        }
+
+        onNavigate('messages');
+    }, [user, onNavigate]);
 
     return (
         <div className="min-h-full bg-gradient-to-b from-gray-50 to-white">
@@ -93,7 +152,15 @@ const MyOrdersPage = () => {
                 orders.length > 0 ? (
                     <div className="space-y-4">
                         {/* ✅ 确保 OrderCard 接收到正确的 role prop */}
-                        {orders.map(order => <OrderCard key={order.id} order={order} role={activeTab} onUpdate={fetchOrders} />)}
+                        {orders.map(order => (
+                            <OrderCard
+                                key={order.id}
+                                order={order}
+                                role={activeTab}
+                                onUpdate={fetchOrders}
+                                onContact={handleContact}
+                            />
+                        ))}
                     </div>
                 ) : (
                     <div className="text-center text-gray-500 mt-10">
