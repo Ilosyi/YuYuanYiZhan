@@ -45,6 +45,8 @@ const gatherUploadedImages = (req) => {
 
 const buildImageUrl = (file) => `/uploads/${file.filename}`;
 
+const isLocalUploadUrl = (value) => typeof value === 'string' && value.startsWith('/uploads/');
+
 const deletePhysicalFiles = (imageUrls = []) => {
     imageUrls.forEach((url) => {
         const absolute = resolveUploadAbsolutePath(url);
@@ -144,9 +146,50 @@ async function initializeDatabase() {
             INDEX idx_listing_order (listing_id, sort_order)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `;
+    const createUserProfilesTableSQL = `
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id INT PRIMARY KEY,
+            display_name VARCHAR(255) NULL,
+            student_id VARCHAR(50) NULL,
+            contact_phone VARCHAR(50) NULL,
+            avatar_url VARCHAR(500) NULL,
+            bio TEXT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_profiles_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `;
+    const createUserFollowsTableSQL = `
+        CREATE TABLE IF NOT EXISTS user_follows (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            follower_id INT NOT NULL,
+            following_id INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_user_follows_follower FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_user_follows_following FOREIGN KEY (following_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT uniq_follow UNIQUE (follower_id, following_id),
+            INDEX idx_follower (follower_id),
+            INDEX idx_following (following_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `;
+    const createUserFavoritesTableSQL = `
+        CREATE TABLE IF NOT EXISTS user_favorites (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            listing_id INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_user_favorites_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_user_favorites_listing FOREIGN KEY (listing_id) REFERENCES listings(id) ON DELETE CASCADE,
+            CONSTRAINT uniq_favorite UNIQUE (user_id, listing_id),
+            INDEX idx_user (user_id),
+            INDEX idx_listing (listing_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `;
     try {
         await pool.execute(createMessagesTableSQL);
         await pool.execute(createListingImagesTableSQL);
+        await pool.execute(createUserProfilesTableSQL);
+        await pool.execute(createUserFollowsTableSQL);
+        await pool.execute(createUserFavoritesTableSQL);
         await pool.execute(`
             INSERT INTO listing_images (listing_id, image_url, sort_order)
             SELECT l.id, l.image_url, 0
@@ -190,6 +233,147 @@ const uploadListingImages = upload.fields([
     { name: 'images', maxCount: 10 },
     { name: 'image', maxCount: 1 }
 ]);
+const uploadAvatar = upload.single('avatar');
+
+const sanitizeNullableString = (value, maxLength) => {
+    if (value === undefined || value === null) {
+        return null;
+    }
+    const trimmed = String(value).trim();
+    if (!trimmed) {
+        return null;
+    }
+    return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
+};
+
+const getUserProfileSnapshot = async (targetUserId, currentUserId = null) => {
+    const [userRows] = await pool.execute(
+        'SELECT id, username, created_at FROM users WHERE id = ?',
+        [targetUserId]
+    );
+    if (!userRows.length) {
+        return null;
+    }
+
+    const user = userRows[0];
+    const [profileRows] = await pool.execute(
+        'SELECT display_name, student_id, contact_phone, avatar_url, bio, updated_at FROM user_profiles WHERE user_id = ?',
+        [targetUserId]
+    );
+    const profile = profileRows[0] || null;
+
+    const [[stats]] = await pool.execute(
+        `SELECT
+            (SELECT COUNT(*) FROM user_follows WHERE follower_id = ?) AS following_count,
+            (SELECT COUNT(*) FROM user_follows WHERE following_id = ?) AS follower_count,
+            (SELECT COUNT(*) FROM listings WHERE user_id = ?) AS listings_count,
+            (SELECT COUNT(*) FROM user_favorites WHERE user_id = ?) AS favorites_count
+        `,
+        [targetUserId, targetUserId, targetUserId, targetUserId]
+    );
+
+    let relationship = {
+        isSelf: currentUserId === targetUserId,
+        isFollowing: false,
+        isFollower: false
+    };
+
+    if (currentUserId && currentUserId !== targetUserId) {
+        const [[followState]] = await pool.execute(
+            `SELECT
+                EXISTS(
+                    SELECT 1 FROM user_follows WHERE follower_id = ? AND following_id = ?
+                ) AS is_following,
+                EXISTS(
+                    SELECT 1 FROM user_follows WHERE follower_id = ? AND following_id = ?
+                ) AS is_follower
+            `,
+            [currentUserId, targetUserId, targetUserId, currentUserId]
+        );
+        relationship = {
+            isSelf: false,
+            isFollowing: Boolean(followState?.is_following),
+            isFollower: Boolean(followState?.is_follower)
+        };
+    }
+
+    return {
+        id: user.id,
+        username: user.username,
+        createdAt: user.created_at,
+        profile: {
+            displayName: profile?.display_name || null,
+            studentId: profile?.student_id || null,
+            contactPhone: profile?.contact_phone || null,
+            avatarUrl: profile?.avatar_url || null,
+            bio: profile?.bio || null,
+            updatedAt: profile?.updated_at || null
+        },
+        stats: {
+            following: Number(stats?.following_count || 0),
+            followers: Number(stats?.follower_count || 0),
+            listings: Number(stats?.listings_count || 0),
+            favorites: Number(stats?.favorites_count || 0)
+        },
+        relationship
+    };
+};
+
+const buildFollowList = async (targetUserId, currentUserId, mode = 'followers') => {
+    const isFollowersMode = mode === 'followers';
+    const selectColumn = isFollowersMode ? 'uf.follower_id' : 'uf.following_id';
+    const whereColumn = isFollowersMode ? 'uf.following_id' : 'uf.follower_id';
+
+    const [rows] = await pool.execute(
+        `SELECT 
+            ${selectColumn} AS user_id,
+            u.username,
+            up.display_name,
+            up.avatar_url,
+            up.bio,
+            uf.created_at AS relation_created_at,
+            EXISTS(
+                SELECT 1 FROM user_follows 
+                WHERE follower_id = ? AND following_id = ${selectColumn}
+            ) AS is_followed_by_current,
+            EXISTS(
+                SELECT 1 FROM user_follows 
+                WHERE follower_id = ${selectColumn} AND following_id = ?
+            ) AS is_following_current
+        FROM user_follows uf
+        JOIN users u ON ${selectColumn} = u.id
+        LEFT JOIN user_profiles up ON up.user_id = u.id
+        WHERE ${whereColumn} = ?
+        ORDER BY uf.created_at DESC`,
+        [currentUserId, currentUserId, targetUserId]
+    );
+
+    return rows.map((row) => ({
+        id: row.user_id,
+        username: row.username,
+        displayName: row.display_name || null,
+        avatarUrl: row.avatar_url || null,
+        bio: row.bio || null,
+        followedAt: row.relation_created_at,
+        isFollowedByCurrentUser: Boolean(row.is_followed_by_current),
+        isFollowingCurrentUser: Boolean(row.is_following_current)
+    }));
+};
+
+const fetchFavoriteListings = async (userId) => {
+    const [rows] = await pool.execute(
+        `SELECT 
+            l.*, 
+            uf.created_at AS favorited_at,
+            (SELECT COUNT(*) FROM listing_images li WHERE li.listing_id = l.id) AS images_count
+        FROM user_favorites uf
+        JOIN listings l ON uf.listing_id = l.id
+        WHERE uf.user_id = ?
+        ORDER BY uf.created_at DESC`,
+        [userId]
+    );
+    return rows;
+};
 
 // =================================================================
 // 4. 认证中间件 (Authentication Middleware)
@@ -251,6 +435,304 @@ app.post('/api/auth/login', async (req, res) => {
         res.json({ accessToken, user: tokenPayload });
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
+// --- 5.1.1 用户资料路由 (User Profile Routes) ---
+app.get('/api/users/me', authenticateToken, async (req, res) => {
+    try {
+        const snapshot = await getUserProfileSnapshot(req.user.id, req.user.id);
+        if (!snapshot) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        res.json(snapshot);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to load profile.', error: error.message });
+    }
+});
+
+app.get('/api/users/:id/profile', authenticateToken, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+        return res.status(400).json({ message: 'Invalid user id.' });
+    }
+    try {
+        const snapshot = await getUserProfileSnapshot(targetId, req.user.id);
+        if (!snapshot) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        res.json(snapshot);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to load profile.', error: error.message });
+    }
+});
+
+app.put('/api/users/me', authenticateToken, async (req, res) => {
+    const displayName = sanitizeNullableString(req.body.displayName, 255);
+    const studentId = sanitizeNullableString(req.body.studentId, 50);
+    const contactPhone = sanitizeNullableString(req.body.contactPhone, 50);
+    const avatarUrl = sanitizeNullableString(req.body.avatarUrl, 500);
+    const bio = sanitizeNullableString(req.body.bio, 2000);
+
+    try {
+        await pool.execute(
+            `INSERT INTO user_profiles (user_id, display_name, student_id, contact_phone, avatar_url, bio)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                 display_name = VALUES(display_name),
+                 student_id = VALUES(student_id),
+                 contact_phone = VALUES(contact_phone),
+                 avatar_url = VALUES(avatar_url),
+                 bio = VALUES(bio)`
+            ,
+            [req.user.id, displayName, studentId, contactPhone, avatarUrl, bio]
+        );
+
+    const snapshot = await getUserProfileSnapshot(req.user.id, req.user.id);
+        res.json({ message: 'Profile updated successfully.', profile: snapshot });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to update profile.', error: error.message });
+    }
+});
+
+app.post('/api/users/me/avatar', authenticateToken, uploadAvatar, async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ message: 'Avatar file is required.' });
+    }
+
+    const newAvatarUrl = buildImageUrl(req.file);
+    let previousAvatarUrl = null;
+
+    try {
+        const [[existingProfile]] = await pool.execute(
+            'SELECT avatar_url FROM user_profiles WHERE user_id = ?',
+            [req.user.id]
+        );
+        previousAvatarUrl = existingProfile?.avatar_url || null;
+
+        await pool.execute(
+            `INSERT INTO user_profiles (user_id, avatar_url)
+             VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE
+                 avatar_url = VALUES(avatar_url)`,
+            [req.user.id, newAvatarUrl]
+        );
+
+        if (previousAvatarUrl && previousAvatarUrl !== newAvatarUrl && isLocalUploadUrl(previousAvatarUrl)) {
+            deletePhysicalFiles([previousAvatarUrl]);
+        }
+
+        const snapshot = await getUserProfileSnapshot(req.user.id, req.user.id);
+        res.json({ message: 'Avatar updated successfully.', avatarUrl: newAvatarUrl, profile: snapshot });
+    } catch (error) {
+        deletePhysicalFiles([newAvatarUrl]);
+        res.status(500).json({ message: 'Failed to update avatar.', error: error.message });
+    }
+});
+
+app.post('/api/users/:id/follow', authenticateToken, async (req, res) => {
+    const targetId = Number(req.params.id);
+    const currentUserId = req.user.id;
+
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+        return res.status(400).json({ message: 'Invalid user id.' });
+    }
+    if (targetId === currentUserId) {
+        return res.status(400).json({ message: 'You cannot follow yourself.' });
+    }
+
+    const [users] = await pool.execute('SELECT id FROM users WHERE id = ?', [targetId]);
+    if (!users.length) {
+        return res.status(404).json({ message: 'User not found.' });
+    }
+
+    try {
+        await pool.execute(
+            `INSERT INTO user_follows (follower_id, following_id) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE created_at = created_at`,
+            [currentUserId, targetId]
+        );
+        const profile = await getUserProfileSnapshot(targetId, currentUserId);
+        const selfStats = (await getUserProfileSnapshot(currentUserId, currentUserId)).stats;
+        res.json({ message: 'Followed successfully.', profile, selfStats });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to follow user.', error: error.message });
+    }
+});
+
+app.delete('/api/users/:id/follow', authenticateToken, async (req, res) => {
+    const targetId = Number(req.params.id);
+    const currentUserId = req.user.id;
+
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+        return res.status(400).json({ message: 'Invalid user id.' });
+    }
+    if (targetId === currentUserId) {
+        return res.status(400).json({ message: 'You cannot unfollow yourself.' });
+    }
+
+    try {
+        await pool.execute(
+            'DELETE FROM user_follows WHERE follower_id = ? AND following_id = ?',
+            [currentUserId, targetId]
+        );
+        const profile = await getUserProfileSnapshot(targetId, currentUserId);
+        const selfStats = (await getUserProfileSnapshot(currentUserId, currentUserId)).stats;
+        res.json({ message: 'Unfollowed successfully.', profile, selfStats });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to unfollow user.', error: error.message });
+    }
+});
+
+app.get('/api/users/:id/followers', authenticateToken, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+        return res.status(400).json({ message: 'Invalid user id.' });
+    }
+    try {
+        const [users] = await pool.execute('SELECT id FROM users WHERE id = ?', [targetId]);
+        if (!users.length) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        const followers = await buildFollowList(targetId, req.user.id, 'followers');
+        res.json({ followers });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to load followers.', error: error.message });
+    }
+});
+
+app.get('/api/users/:id/following', authenticateToken, async (req, res) => {
+    const targetId = Number(req.params.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+        return res.status(400).json({ message: 'Invalid user id.' });
+    }
+    try {
+        const [users] = await pool.execute('SELECT id FROM users WHERE id = ?', [targetId]);
+        if (!users.length) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        const following = await buildFollowList(targetId, req.user.id, 'following');
+        res.json({ following });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to load following list.', error: error.message });
+    }
+});
+
+app.get('/api/users/search', authenticateToken, async (req, res) => {
+    const rawQuery = req.query.q ?? req.query.query ?? '';
+    const keyword = sanitizeNullableString(rawQuery, 255);
+    if (!keyword) {
+        return res.json({ results: [] });
+    }
+
+    const likeValue = `%${keyword}%`;
+    const currentUserId = req.user.id;
+
+    try {
+        const [rows] = await pool.execute(
+            `SELECT
+                u.id,
+                u.username,
+                u.created_at,
+                up.display_name,
+                up.student_id,
+                up.contact_phone,
+                up.avatar_url,
+                up.bio,
+                (SELECT COUNT(*) FROM user_follows WHERE follower_id = u.id) AS following_count,
+                (SELECT COUNT(*) FROM user_follows WHERE following_id = u.id) AS follower_count,
+                EXISTS(
+                    SELECT 1 FROM user_follows
+                    WHERE follower_id = ? AND following_id = u.id
+                ) AS is_followed_by_current,
+                EXISTS(
+                    SELECT 1 FROM user_follows
+                    WHERE follower_id = u.id AND following_id = ?
+                ) AS is_following_current
+            FROM users u
+            LEFT JOIN user_profiles up ON up.user_id = u.id
+            WHERE u.username LIKE ?
+               OR (up.display_name IS NOT NULL AND up.display_name LIKE ?)
+               OR (up.student_id IS NOT NULL AND up.student_id LIKE ?)
+            ORDER BY up.display_name IS NULL, up.display_name, u.username
+            LIMIT 20`,
+            [currentUserId, currentUserId, likeValue, likeValue, likeValue]
+        );
+
+        const results = rows.map((row) => ({
+            id: row.id,
+            username: row.username,
+            createdAt: row.created_at,
+            displayName: row.display_name || null,
+            studentId: row.student_id || null,
+            contactPhone: row.contact_phone || null,
+            avatarUrl: row.avatar_url || null,
+            bio: row.bio || null,
+            stats: {
+                following: Number(row.following_count || 0),
+                followers: Number(row.follower_count || 0)
+            },
+            relationship: {
+                isSelf: row.id === currentUserId,
+                isFollowing: Boolean(row.is_followed_by_current),
+                isFollower: Boolean(row.is_following_current)
+            }
+        }));
+
+        res.json({ results });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to search users.', error: error.message });
+    }
+});
+
+app.get('/api/users/me/favorites', authenticateToken, async (req, res) => {
+    try {
+        const favorites = await fetchFavoriteListings(req.user.id);
+        res.json({ favorites });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to load favorites.', error: error.message });
+    }
+});
+
+app.post('/api/listings/:id/favorite', authenticateToken, async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+        return res.status(400).json({ message: 'Invalid listing id.' });
+    }
+
+    const [listings] = await pool.execute('SELECT id FROM listings WHERE id = ?', [listingId]);
+    if (!listings.length) {
+        return res.status(404).json({ message: 'Listing not found.' });
+    }
+
+    try {
+        await pool.execute(
+            `INSERT INTO user_favorites (user_id, listing_id) VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE created_at = CURRENT_TIMESTAMP`,
+            [req.user.id, listingId]
+        );
+        const stats = (await getUserProfileSnapshot(req.user.id, req.user.id)).stats;
+        res.json({ message: 'Favorited successfully.', listingId, stats });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to favorite listing.', error: error.message });
+    }
+});
+
+app.delete('/api/listings/:id/favorite', authenticateToken, async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+        return res.status(400).json({ message: 'Invalid listing id.' });
+    }
+
+    try {
+        await pool.execute(
+            'DELETE FROM user_favorites WHERE user_id = ? AND listing_id = ?',
+            [req.user.id, listingId]
+        );
+        const stats = (await getUserProfileSnapshot(req.user.id, req.user.id)).stats;
+        res.json({ message: 'Unfavorited successfully.', listingId, stats });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to unfavorite listing.', error: error.message });
     }
 });
 

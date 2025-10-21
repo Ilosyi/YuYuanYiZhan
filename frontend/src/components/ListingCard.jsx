@@ -4,7 +4,15 @@ import { useAuth } from '../context/AuthContext'; // 1. 导入 useAuth hook
 import { resolveAssetUrl } from '../api';
 import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 
-const ListingCard = ({ item, onPurchase, onContact, onOpenDetail, theme }) => {
+const ListingCard = ({
+    item,
+    onPurchase,
+    onContact,
+    onOpenDetail,
+    onToggleFavorite,
+    isFavorited = false,
+    theme,
+}) => {
     const { user } = useAuth(); // 2. 获取当前登录的用户信息
 
     const statusText = { available: '上架中', in_progress: '交易中', completed: '已售出' };
@@ -71,10 +79,25 @@ const ListingCard = ({ item, onPurchase, onContact, onOpenDetail, theme }) => {
 
                     {/* ✅ 交互按钮区 */}
                     <div className="mt-3 flex flex-wrap gap-2 justify-end">
+                        {typeof onToggleFavorite === 'function' && (
+                            <button
+                                onClick={() => onToggleFavorite(item, !isFavorited)}
+                                className={`px-3 py-1 text-sm rounded-md border transition-colors duration-150 ${
+                                    isFavorited
+                                        ? 'border-amber-400 bg-amber-50 text-amber-600 hover:bg-amber-100'
+                                        : 'border-gray-200 text-gray-600 hover:bg-gray-100'
+                                }`}
+                                aria-pressed={isFavorited}
+                                type="button"
+                            >
+                                {isFavorited ? '已收藏' : '收藏'}
+                            </button>
+                        )}
                         {canPurchase && (
                             <button
                                 onClick={() => onPurchase(item)}
                                 className={`px-3 py-1 text-sm rounded-md ${theme?.buttonBg || 'bg-indigo-600 hover:bg-indigo-700'} text-white`}
+                                type="button"
                             >
                                 立即购买
                             </button>
@@ -83,6 +106,7 @@ const ListingCard = ({ item, onPurchase, onContact, onOpenDetail, theme }) => {
                             <button
                                 onClick={() => onContact(item)}
                                 className={`px-3 py-1 text-sm rounded-md border border-gray-300 text-gray-700 ${theme?.outlineHoverBorder || ''} ${theme?.outlineHoverText || ''}`}
+                                type="button"
                             >
                                 联系对方
                             </button>
@@ -91,6 +115,7 @@ const ListingCard = ({ item, onPurchase, onContact, onOpenDetail, theme }) => {
                             <button
                                 onClick={handleOpenDetail}
                                 className={`px-3 py-1 text-sm rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200`}
+                                type="button"
                             >
                                 查看详情
                             </button>

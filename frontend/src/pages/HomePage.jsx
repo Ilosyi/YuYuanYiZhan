@@ -72,7 +72,16 @@ const resolveImageUrl = (value, listingType) => {
     return getDefaultListingImage(listingType) || FALLBACK_IMAGE;
 };
 
-const InfoCard = ({ item, onOpenDetail, onContact, isLostFound, mode, theme }) => {
+const InfoCard = ({
+    item,
+    onOpenDetail,
+    onContact,
+    onToggleFavorite,
+    isFavorited = false,
+    isLostFound,
+    mode,
+    theme,
+}) => {
     const badgeText = isLostFound ? (item.type === 'found' ? '招领' : '寻物') : item.category;
     const badgeStyle = isLostFound
         ? item.type === 'found'
@@ -116,6 +125,23 @@ const InfoCard = ({ item, onOpenDetail, onContact, isLostFound, mode, theme }) =
                     <span>{formatDateTime(item.created_at)}</span>
                 </div>
                 <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+                    {typeof onToggleFavorite === 'function' && (
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleFavorite(item, !isFavorited);
+                            }}
+                            className={`px-3 py-1.5 text-sm rounded-md border transition-colors duration-150 ${
+                                isFavorited
+                                    ? 'border-amber-400 bg-amber-50 text-amber-600 hover:bg-amber-100'
+                                    : 'border-gray-200 text-gray-600 hover:bg-gray-100'
+                            }`}
+                            aria-pressed={isFavorited}
+                        >
+                            {isFavorited ? '已收藏' : '收藏'}
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={(e) => {
@@ -160,11 +186,31 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const [detailError, setDetailError] = useState('');
     const [replyContent, setReplyContent] = useState('');
     const [activeImageIndex, setActiveImageIndex] = useState(0);
+    const [favoriteIds, setFavoriteIds] = useState(() => new Set());
 
     useEffect(() => {
         setCategory('all');
         setSearchTerm('');
     }, [activeMode]);
+
+    const refreshFavoriteIds = useCallback(async () => {
+        if (!user) {
+            setFavoriteIds(() => new Set());
+            return;
+        }
+        try {
+            const { data } = await api.get('/api/users/me/favorites');
+            const ids = new Set((data?.favorites || []).map((fav) => fav.id));
+            setFavoriteIds(ids);
+        } catch (error) {
+            console.error('加载收藏列表失败:', error);
+            setFavoriteIds(() => new Set());
+        }
+    }, [user?.id]);
+
+    useEffect(() => {
+        refreshFavoriteIds();
+    }, [refreshFavoriteIds]);
 
     const fetchListings = useCallback(async () => {
         setIsLoading(true);
@@ -206,6 +252,34 @@ const HomePage = ({ onNavigate = () => {} }) => {
                 alert(err.response?.data?.message || '下单失败，请稍后再试。');
                 fetchListings();
             }
+        }
+    };
+
+    const handleToggleFavorite = async (item, shouldFavorite) => {
+        if (!user) {
+            alert('请先登录后再收藏。');
+            return;
+        }
+        if (!item?.id) return;
+
+        try {
+            if (shouldFavorite) {
+                await api.post(`/api/listings/${item.id}/favorite`);
+            } else {
+                await api.delete(`/api/listings/${item.id}/favorite`);
+            }
+            setFavoriteIds((prev) => {
+                const next = new Set(prev);
+                if (shouldFavorite) {
+                    next.add(item.id);
+                } else {
+                    next.delete(item.id);
+                }
+                return next;
+            });
+        } catch (error) {
+            console.error('收藏操作失败:', error);
+            alert(error.response?.data?.message || '收藏操作失败，请稍后再试。');
         }
     };
 
@@ -353,6 +427,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
                             onPurchase={handlePurchase}
                             onContact={handleContact}
                             onOpenDetail={openDetail}
+                            onToggleFavorite={handleToggleFavorite}
+                            isFavorited={favoriteIds.has(item.id)}
                             theme={getModuleTheme(item.type || activeMode)}
                         />
                     ))}
@@ -371,6 +447,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
                         mode={activeMode}
                         onOpenDetail={openDetail}
                         onContact={handleContact}
+                        onToggleFavorite={handleToggleFavorite}
+                        isFavorited={favoriteIds.has(item.id)}
                         theme={getModuleTheme(isLostFound ? 'lostfound' : 'help')}
                     />
                 ))}

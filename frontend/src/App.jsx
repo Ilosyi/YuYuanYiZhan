@@ -9,6 +9,7 @@ import HomePage from './pages/HomePage';
 import MyListingsPage from './pages/MyListingsPage';
 import MyOrdersPage from './pages/MyOrdersPage';
 import MyMessagesPage from './pages/MyMessagesPage';
+import UserCenterPage from './pages/UserCenterPage';
 import PostModal from './components/PostModal';
 
 // Header 组件，现在包含用户信息和登出按钮
@@ -17,10 +18,11 @@ const Header = ({ activeNav, setActiveNav, onPostNewClick }) => {
     
     // ✅ 修正：补全所有的导航项
     const navItems = {
-        home: '首页',
-        myListings: '我的发布',
-        myOrders: '我的订单',
-        messages: '我的消息',
+    home: '首页',
+    myListings: '我的发布',
+    myOrders: '我的订单',
+    messages: '我的消息',
+    userCenter: '用户中心',
     };
 
     return (
@@ -107,6 +109,8 @@ function MainApp() {
               return <MyOrdersPage key={refreshTrigger} currentUser={user} />;
           case 'messages': 
               return <MyMessagesPage currentUser={user} />;
+          case 'userCenter':
+              return <UserCenterPage key={refreshTrigger} currentUser={user} onNavigate={setActiveNav} />;
           default: 
               return <HomePage onNavigate={setActiveNav} />;
       }
