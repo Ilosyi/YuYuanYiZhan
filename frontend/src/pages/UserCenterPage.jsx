@@ -114,6 +114,7 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
     const [followers, setFollowers] = useState([]);
     const [following, setFollowing] = useState([]);
     const [favorites, setFavorites] = useState([]);
+    const [favoriteFilter, setFavoriteFilter] = useState('all');
 
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
@@ -504,7 +505,31 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
         }
     };
 
+    const handleOpenDetailFromFavorites = useCallback((item) => {
+        if (!item?.id) return;
+        const listingTypeKey = deriveListingTypeKey(item);
+        try {
+            window.localStorage.setItem(
+                'yy_pending_listing_detail',
+                JSON.stringify({
+                    listingId: item.id,
+                    listingType: listingTypeKey,
+                })
+            );
+        } catch (error) {
+            console.warn('无法记录待展示的帖子详情。', error);
+        }
+        onNavigate('home');
+    }, [onNavigate]);
+
     const favoriteIdSet = useMemo(() => new Set(favorites.map((item) => item.id)), [favorites]);
+    const filteredFavorites = useMemo(() => {
+        if (favoriteFilter === 'all') {
+            return favorites;
+        }
+        const normalized = favoriteFilter.toLowerCase();
+        return favorites.filter((item) => deriveListingTypeKey(item).toLowerCase() === normalized);
+    }, [favorites, favoriteFilter]);
 
     const tabConfigs = useMemo(() => {
         const stats = profile?.stats || {};
@@ -740,17 +765,46 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
                             ) : favorites.length === 0 ? (
                                 <p className="text-sm text-gray-500">还没有收藏任何帖子，去首页逛逛吧。</p>
                             ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                                    {favorites.map((item) => (
-                                        <ListingCard
-                                            key={item.id}
-                                            item={item}
-                                            isFavorited={favoriteIdSet.has(item.id)}
-                                            onToggleFavorite={handleToggleFavorite}
-                                            theme={getModuleTheme(item.type || 'sale')}
-                                        />
-                                    ))}
-                                </div>
+                                <>
+                                    <div className="flex flex-wrap gap-2">
+                                        {[
+                                            { key: 'all', label: '全部' },
+                                            { key: 'sale', label: '出售' },
+                                            { key: 'acquire', label: '收购' },
+                                            { key: 'help', label: '帮帮忙' },
+                                            { key: 'lostfound', label: '失物招领' },
+                                        ].map((option) => (
+                                            <button
+                                                key={option.key}
+                                                type="button"
+                                                onClick={() => setFavoriteFilter(option.key)}
+                                                className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+                                                    favoriteFilter === option.key
+                                                        ? 'border-indigo-500 bg-indigo-50 text-indigo-600 shadow-sm'
+                                                        : 'border-gray-200 text-gray-600 hover:bg-gray-100'
+                                                }`}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {filteredFavorites.length === 0 ? (
+                                        <p className="text-sm text-gray-500">该分类下暂无收藏内容。</p>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                                            {filteredFavorites.map((item) => (
+                                                <ListingCard
+                                                    key={item.id}
+                                                    item={item}
+                                                    isFavorited={favoriteIdSet.has(item.id)}
+                                                    onToggleFavorite={handleToggleFavorite}
+                                                    onOpenDetail={handleOpenDetailFromFavorites}
+                                                    theme={getModuleTheme(item.type || 'sale')}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
                     )}

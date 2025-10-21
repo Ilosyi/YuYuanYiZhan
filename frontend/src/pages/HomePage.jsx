@@ -1,6 +1,6 @@
 // frontend/src/pages/HomePage.jsx
 // 版本: 1.1 - 实现动态分类筛选 + 主页主题化细节
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api, { resolveAssetUrl } from '../api';
 import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 import { getModuleTheme } from '../constants/moduleThemes';
@@ -187,6 +187,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const [replyContent, setReplyContent] = useState('');
     const [activeImageIndex, setActiveImageIndex] = useState(0);
     const [favoriteIds, setFavoriteIds] = useState(() => new Set());
+    const pendingDetailRef = useRef(null);
 
     useEffect(() => {
         setCategory('all');
@@ -211,6 +212,24 @@ const HomePage = ({ onNavigate = () => {} }) => {
     useEffect(() => {
         refreshFavoriteIds();
     }, [refreshFavoriteIds]);
+
+    useEffect(() => {
+        try {
+            const stored = window.localStorage.getItem('yy_pending_listing_detail');
+            if (stored) {
+                window.localStorage.removeItem('yy_pending_listing_detail');
+                const parsed = JSON.parse(stored);
+                if (parsed?.listingType && parsed.listingType !== activeMode) {
+                    setActiveMode(parsed.listingType);
+                }
+                if (parsed?.listingId) {
+                    pendingDetailRef.current = parsed;
+                }
+            }
+        } catch (error) {
+            console.warn('无法读取待展示的帖子详情。', error);
+        }
+    }, []);
 
     const fetchListings = useCallback(async () => {
         setIsLoading(true);
@@ -238,12 +257,27 @@ const HomePage = ({ onNavigate = () => {} }) => {
         return () => clearTimeout(timer);
     }, [fetchListings]);
 
+    useEffect(() => {
+        if (pendingDetailRef.current && !isDetailOpen) {
+            const { listingId } = pendingDetailRef.current;
+            pendingDetailRef.current = null;
+            if (listingId) {
+                openDetail({ id: listingId });
+            }
+        }
+    }, [isDetailOpen]);
+
     const handlePurchase = async (item) => {
         if (!user) {
             alert('请先登录再进行购买。');
             return;
         }
-        if (window.confirm(`确定以 ¥${Number(item.price).toLocaleString()} 购买 "${item.title}" 吗？`)) {
+        const numericPrice = Number(item.price);
+        const hasValidPrice = Number.isFinite(numericPrice) && numericPrice > 0;
+        const message = hasValidPrice
+            ? `确定以 ¥${numericPrice.toLocaleString()} 购买 "${item.title}" 吗？`
+            : `确定购买 "${item.title}" 吗？`;
+        if (window.confirm(message)) {
             try {
                 await api.post('/api/orders', { listingId: item.id });
                 alert('下单成功！您可以在“我的订单”中查看进度。');
@@ -400,6 +434,12 @@ const HomePage = ({ onNavigate = () => {} }) => {
         return deriveListingTypeKey(detailListing, detailListing?.type || activeMode);
     }, [detailListing, activeMode]);
 
+    const detailModeLabel = useMemo(() => {
+        if (!detailListing) return '';
+        const key = deriveListingTypeKey(detailListing, detailListing?.type || activeMode);
+        return MODE_TEXT[key] || detailListing.type || key;
+    }, [detailListing, activeMode]);
+
     useEffect(() => {
         setActiveImageIndex(0);
     }, [detailListing?.id, galleryImages.length]);
@@ -524,7 +564,9 @@ const HomePage = ({ onNavigate = () => {} }) => {
                 <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center px-4 py-6 z-50">
                     <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
                         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-                            <h3 className="text-xl font-semibold text-gray-900">帖子详情</h3>
+                            <h3 className="text-xl font-semibold text-gray-900">
+                                {detailListing?.type === 'sale' ? '商品详情' : '帖子详情'}
+                            </h3>
                             <button onClick={closeDetail} className="text-gray-400 hover:text-gray-600">
                                 ✕
                             </button>
@@ -538,11 +580,16 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                     <div className="space-y-3">
                                         <h4 className="text-2xl font-bold text-gray-900">{detailListing.title}</h4>
                                         <div className="flex flex-wrap gap-3 text-sm text-gray-500">
-                                            <span>类型：{MODE_TEXT[detailListing.type] || detailListing.type}</span>
+                                            <span>类型：{detailModeLabel}</span>
                                             <span>分类：{detailListing.category}</span>
                                             <span>发布者：{detailListing.owner_name || detailListing.user_name}</span>
                                             <span>发布时间：{formatDateTime(detailListing.created_at)}</span>
                                         </div>
+                                        {detailListing.type === 'sale' && (
+                                            <div className="text-2xl font-semibold text-emerald-600">
+                                                {detailListing.price ? `¥${Number(detailListing.price).toLocaleString()}` : '议价'}
+                                            </div>
+                                        )}
                                         {galleryImages.length > 0 && (
                                             <div className="space-y-3">
                                                 <div className="relative">
@@ -622,7 +669,27 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                 disabled={!user || detailLoading}
                                 className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                             />
-                            <div className="flex justify-end mt-3">
+                            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-3">
+                                <div className="flex flex-wrap gap-2">
+                                    {detailListing && detailListing.user_id !== user?.id && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleContact(detailListing)}
+                                            className="px-4 py-2 text-sm font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100"
+                                        >
+                                            联系对方
+                                        </button>
+                                    )}
+                                    {detailListing && detailListing.type === 'sale' && detailListing.user_id !== user?.id && detailListing.status === 'available' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handlePurchase(detailListing)}
+                                            className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500"
+                                        >
+                                            立即购买
+                                        </button>
+                                    )}
+                                </div>
                                 <button
                                     type="button"
                                     onClick={submitReply}
