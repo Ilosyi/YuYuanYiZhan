@@ -10,6 +10,13 @@ import { useAuth } from '../context/AuthContext';
 
 const DEFAULT_AVATAR = resolveAssetUrl('/default-images/default-avatar.jpg');
 
+const LISTING_TYPE_LABELS = {
+    sale: '闲置出售',
+    acquire: '求购',
+    help: '帮帮忙',
+    lostfound: '失物招领',
+};
+
 const emptyProfile = {
     displayName: '',
     studentId: '',
@@ -129,6 +136,14 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
     const [followersLoading, setFollowersLoading] = useState(false);
     const [followingLoading, setFollowingLoading] = useState(false);
     const [favoritesLoading, setFavoritesLoading] = useState(false);
+
+    const [isDetailOpen, setIsDetailOpen] = useState(false);
+    const [detailListing, setDetailListing] = useState(null);
+    const [detailReplies, setDetailReplies] = useState([]);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [detailError, setDetailError] = useState('');
+    const [detailReplyContent, setDetailReplyContent] = useState('');
+    const [detailActiveImageIndex, setDetailActiveImageIndex] = useState(0);
 
     useEffect(() => {
         return () => {
@@ -481,12 +496,146 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
                 })
             );
             setFeedback('');
+            setDetailError('');
         } catch (storageError) {
             console.warn('无法记录待跳转的会话。', storageError);
         }
 
         onNavigate('messages');
     }, [effectiveUser, onNavigate, viewedUser]);
+
+    const loadListingDetail = useCallback(async (listingId) => {
+        if (!listingId) return;
+        setDetailLoading(true);
+        setDetailError('');
+        try {
+            const { data } = await api.get(`/api/listings/${listingId}/detail`);
+            setDetailListing(data.listing || null);
+            setDetailReplies(data.replies || []);
+            setDetailActiveImageIndex(0);
+        } catch (error) {
+            console.error('加载帖子详情失败:', error);
+            setDetailError(error.response?.data?.message || '详情加载失败，请稍后再试。');
+        } finally {
+            setDetailLoading(false);
+        }
+    }, []);
+
+    const handleOpenListingDetail = useCallback((item) => {
+        if (!item?.id) return;
+        setIsDetailOpen(true);
+        setDetailListing(null);
+        setDetailReplies([]);
+        setDetailError('');
+        setDetailReplyContent('');
+        setDetailActiveImageIndex(0);
+        loadListingDetail(item.id);
+    }, [loadListingDetail]);
+
+    const handleCloseListingDetail = useCallback(() => {
+        setIsDetailOpen(false);
+        setDetailListing(null);
+        setDetailReplies([]);
+        setDetailError('');
+        setDetailReplyContent('');
+        setDetailActiveImageIndex(0);
+        setDetailLoading(false);
+    }, []);
+
+    const handleDetailReplySubmit = useCallback(async () => {
+        if (!detailListing) return;
+        if (!effectiveUser) {
+            setFeedback('请先登录后再回复。');
+            return;
+        }
+        const content = detailReplyContent.trim();
+        if (!content) {
+            setDetailError('回复内容不能为空。');
+            return;
+        }
+        try {
+            setDetailError('');
+            await api.post(`/api/listings/${detailListing.id}/replies`, { content });
+            setDetailReplyContent('');
+            await loadListingDetail(detailListing.id);
+        } catch (error) {
+            console.error('回复失败:', error);
+            setDetailError(error.response?.data?.message || '回复失败，请稍后再试。');
+        }
+    }, [detailListing, detailReplyContent, effectiveUser, loadListingDetail]);
+
+    const handleContactFromDetail = useCallback((listing) => {
+        if (!listing) return;
+        if (!effectiveUser) {
+            setFeedback('请先登录后再联系对方。');
+            return;
+        }
+
+        const ownerId = listing.user_id || listing.owner_id;
+        if (!ownerId) {
+            setDetailError('无法获取发布者信息。');
+            return;
+        }
+        if (ownerId === effectiveUser.id) {
+            setDetailError('这是您自己发布的内容。');
+            return;
+        }
+
+        const ownerName = listing.user_name || listing.owner_name || '对方';
+        const typeKey = deriveListingTypeKey(listing);
+        const imageUrl = resolveListingImageUrl(listing.image_url, typeKey);
+
+        try {
+            window.localStorage.setItem(
+                'yy_pending_chat',
+                JSON.stringify({
+                    userId: ownerId,
+                    username: ownerName,
+                    listing: {
+                        id: listing.id,
+                        type: listing.type || typeKey,
+                        title: listing.title,
+                        price: listing.price,
+                        imageUrl,
+                        ownerId,
+                        ownerName,
+                        source: 'user-center-detail',
+                    },
+                })
+            );
+            setFeedback('');
+        } catch (storageError) {
+            console.warn('无法记录待跳转的会话。', storageError);
+        }
+
+        onNavigate('messages');
+    }, [effectiveUser, onNavigate]);
+
+    const handlePurchaseFromDetail = useCallback(async (listing) => {
+        if (!listing) return;
+        if (!effectiveUser) {
+            setFeedback('请先登录再进行购买。');
+            return;
+        }
+        const numericPrice = Number(listing.price);
+        const hasValidPrice = Number.isFinite(numericPrice) && numericPrice > 0;
+        const confirmMessage = hasValidPrice
+            ? `确定以 ¥${numericPrice.toLocaleString()} 购买 “${listing.title}” 吗？`
+            : `确定购买 “${listing.title}” 吗？`;
+        if (!window.confirm(confirmMessage)) {
+            return;
+        }
+        try {
+            setDetailError('');
+            await api.post('/api/orders', { listingId: listing.id });
+            setFeedback('下单成功！可以在“我的订单”中查看进度。');
+            handleCloseListingDetail();
+            onNavigate('myOrders');
+        } catch (error) {
+            console.error('下单失败:', error);
+            setDetailError(error.response?.data?.message || '下单失败，请稍后再试。');
+        }
+    }, [effectiveUser, handleCloseListingDetail, onNavigate]);
 
     const handleToggleFavorite = async (item, shouldFavorite) => {
         if (!item?.id) return;
@@ -505,22 +654,44 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
         }
     };
 
-    const handleOpenDetailFromFavorites = useCallback((item) => {
-        if (!item?.id) return;
-        const listingTypeKey = deriveListingTypeKey(item);
-        try {
-            window.localStorage.setItem(
-                'yy_pending_listing_detail',
-                JSON.stringify({
-                    listingId: item.id,
-                    listingType: listingTypeKey,
-                })
-            );
-        } catch (error) {
-            console.warn('无法记录待展示的帖子详情。', error);
+    const detailGalleryImages = useMemo(() => {
+        if (!detailListing) return [];
+        const listingTypeKey = deriveListingTypeKey(detailListing);
+        if (Array.isArray(detailListing.images) && detailListing.images.length > 0) {
+            return detailListing.images
+                .filter((image) => image?.image_url)
+                .map((image) => ({
+                    id: image.id ?? image.image_url,
+                    url: resolveListingImageUrl(image.image_url, listingTypeKey),
+                }));
         }
-        onNavigate('home');
-    }, [onNavigate]);
+        if (detailListing.image_url) {
+            return [{ id: detailListing.image_url, url: resolveListingImageUrl(detailListing.image_url, listingTypeKey) }];
+        }
+        return [];
+    }, [detailListing]);
+
+    const detailImageFallbackType = useMemo(() => {
+        if (!detailListing) return 'sale';
+        return deriveListingTypeKey(detailListing);
+    }, [detailListing]);
+
+    const detailTypeLabel = useMemo(() => {
+        if (!detailListing) return '';
+        const key = deriveListingTypeKey(detailListing);
+        return LISTING_TYPE_LABELS[key] || detailListing.type || key;
+    }, [detailListing]);
+
+    const detailOwnerId = detailListing ? (detailListing.user_id || detailListing.owner_id) : null;
+
+    useEffect(() => {
+        if (!isDetailOpen) return;
+        if (detailGalleryImages.length === 0) {
+            setDetailActiveImageIndex(0);
+            return;
+        }
+        setDetailActiveImageIndex((prev) => Math.min(prev, detailGalleryImages.length - 1));
+    }, [detailGalleryImages.length, isDetailOpen]);
 
     const favoriteIdSet = useMemo(() => new Set(favorites.map((item) => item.id)), [favorites]);
     const filteredFavorites = useMemo(() => {
@@ -798,7 +969,7 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
                                                     item={item}
                                                     isFavorited={favoriteIdSet.has(item.id)}
                                                     onToggleFavorite={handleToggleFavorite}
-                                                    onOpenDetail={handleOpenDetailFromFavorites}
+                                                    onOpenDetail={handleOpenListingDetail}
                                                     theme={getModuleTheme(item.type || 'sale')}
                                                 />
                                             ))}
@@ -922,11 +1093,163 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
                                         isFavorited={favoriteIdSet.has(item.id)}
                                         onToggleFavorite={handleToggleFavorite}
                                         onContact={handleContactViewedListing}
+                                        onOpenDetail={handleOpenListingDetail}
                                         theme={getModuleTheme(item.type || 'sale')}
                                     />
                                 ))}
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {isDetailOpen && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4 py-6">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                            <h3 className="text-xl font-semibold text-gray-900">
+                                {detailListing?.type === 'sale' ? '商品详情' : '帖子详情'}
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={handleCloseListingDetail}
+                                className="text-gray-400 hover:text-gray-600"
+                                aria-label="关闭详情"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                            {detailLoading && <p className="text-center text-gray-500 py-10">加载详情中...</p>}
+                            {detailError && !detailLoading && (
+                                <p className="text-center text-red-500 py-4">{detailError}</p>
+                            )}
+                            {!detailLoading && detailListing && (
+                                <>
+                                    <div className="space-y-3">
+                                        <h4 className="text-2xl font-bold text-gray-900">{detailListing.title}</h4>
+                                        <div className="flex flex-wrap gap-3 text-sm text-gray-500">
+                                            <span>类型：{detailTypeLabel}</span>
+                                            {detailListing.category && <span>分类：{detailListing.category}</span>}
+                                            <span>发布者：{detailListing.owner_name || detailListing.user_name}</span>
+                                            <span>发布时间：{formatDateTime(detailListing.created_at)}</span>
+                                        </div>
+                                        {detailListing.type === 'sale' && (
+                                            <div className="text-2xl font-semibold text-emerald-600">
+                                                {detailListing.price ? `¥${Number(detailListing.price).toLocaleString()}` : '议价'}
+                                            </div>
+                                        )}
+                                        {detailGalleryImages.length > 0 && (
+                                            <div className="space-y-3">
+                                                <div className="relative">
+                                                    <img
+                                                        src={detailGalleryImages[Math.min(detailActiveImageIndex, detailGalleryImages.length - 1)]?.url}
+                                                        alt={detailListing.title}
+                                                        className="w-full rounded-lg border border-gray-100 object-cover max-h-96"
+                                                        onError={(e) => {
+                                                            e.target.onerror = null;
+                                                            e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
+                                                        }}
+                                                    />
+                                                    {detailGalleryImages.length > 1 && (
+                                                        <span className="absolute top-2 right-2 px-2 py-0.5 text-xs bg-black/60 text-white rounded-full">
+                                                            {detailActiveImageIndex + 1} / {detailGalleryImages.length}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {detailGalleryImages.length > 1 && (
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {detailGalleryImages.map((image, index) => (
+                                                            <button
+                                                                type="button"
+                                                                key={image.id ?? index}
+                                                                onClick={() => setDetailActiveImageIndex(index)}
+                                                                className={`relative w-16 h-16 rounded-lg overflow-hidden border ${
+                                                                    index === detailActiveImageIndex
+                                                                        ? 'border-indigo-500 ring-2 ring-indigo-200'
+                                                                        : 'border-transparent'
+                                                                }`}
+                                                            >
+                                                                <img
+                                                                    src={image.url}
+                                                                    alt={`预览图 ${index + 1}`}
+                                                                    className="w-full h-full object-cover"
+                                                                    onError={(e) => {
+                                                                        e.target.onerror = null;
+                                                                        e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
+                                                                    }}
+                                                                />
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                        <p className="leading-relaxed text-gray-700 whitespace-pre-line">{detailListing.description}</p>
+                                    </div>
+
+                                    <div className="pt-4 border-t border-gray-100">
+                                        <h5 className="text-lg font-semibold text-gray-800 mb-3">留言 ({detailReplies.length})</h5>
+                                        <div className="space-y-3">
+                                            {detailReplies.length === 0 && (
+                                                <p className="text-sm text-gray-500">暂无回复，快来抢沙发吧～</p>
+                                            )}
+                                            {detailReplies.map((reply) => (
+                                                <div key={reply.id} className="bg-gray-50 rounded-lg px-4 py-3 space-y-1">
+                                                    <div className="flex justify-between text-sm text-gray-500">
+                                                        <span>{reply.user_name}</span>
+                                                        <span>{formatDateTime(reply.created_at)}</span>
+                                                    </div>
+                                                    <p className="text-gray-700 text-sm whitespace-pre-line">{reply.content}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        <div className="border-t border-gray-100 bg-gray-50 px-6 py-4">
+                            <textarea
+                                value={detailReplyContent}
+                                onChange={(e) => setDetailReplyContent(e.target.value)}
+                                placeholder={effectiveUser ? '输入你的回复...' : '登录后才能回复'}
+                                rows={3}
+                                disabled={!effectiveUser || detailLoading || !detailListing}
+                                className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
+                            />
+                            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-3">
+                                <div className="flex flex-wrap gap-2">
+                                    {detailListing && detailOwnerId && detailOwnerId !== effectiveUser?.id && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleContactFromDetail(detailListing)}
+                                            className="px-4 py-2 text-sm font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100"
+                                        >
+                                            联系对方
+                                        </button>
+                                    )}
+                                    {detailListing && detailListing.type === 'sale' && detailOwnerId && detailOwnerId !== effectiveUser?.id && detailListing.status === 'available' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handlePurchaseFromDetail(detailListing)}
+                                            className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500"
+                                        >
+                                            立即购买
+                                        </button>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleDetailReplySubmit}
+                                    disabled={!effectiveUser || detailLoading || !detailListing}
+                                    className="px-4 py-2 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-300"
+                                >
+                                    发送回复
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
