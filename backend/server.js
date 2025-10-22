@@ -487,7 +487,8 @@ app.put('/api/users/me', authenticateToken, async (req, res) => {
                  display_name = VALUES(display_name),
                  student_id = VALUES(student_id),
                  contact_phone = VALUES(contact_phone),
-                 avatar_url = VALUES(avatar_url),
+                 /* 仅当客户端明确提供 avatarUrl 时才更新；否则保留原值 */
+                 avatar_url = IFNULL(VALUES(avatar_url), avatar_url),
                  bio = VALUES(bio)`
             ,
             [req.user.id, displayName, studentId, contactPhone, avatarUrl, bio]

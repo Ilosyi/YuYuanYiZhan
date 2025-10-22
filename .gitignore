@@ -57,5 +57,3 @@ coverage/
 *.tmp
 *.temp
 
-#docs
-/docs/*
