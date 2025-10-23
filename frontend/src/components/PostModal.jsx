@@ -368,7 +368,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                     <button type="button" onClick={onClose} className="text-white/80 hover:text-white text-xl leading-none">×</button>
                 </div>
 
-                // 修改表单容器，添加滚动功能
+                {/* 修改表单容器，添加滚动功能 */}
                 <form onSubmit={handleSubmit} className="p-6 overflow-y-auto max-h-[calc(92vh-150px)]">
                     {/* type / category quick pill */}
                     <div className="mb-5 flex flex-wrap items-center gap-2">
