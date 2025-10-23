@@ -771,7 +771,7 @@ app.get('/api/listings', async (req, res) => {
 
 // 发布新帖子 (受保护接口)
 app.post('/api/listings', authenticateToken, uploadListingImages, async (req, res) => {
-    const { title, description, price, category, type } = req.body;
+    const { title, description, price, category, type, start_location, end_location } = req.body;
     const { id: userId, username: userName } = req.user;
     const uploadedImages = gatherUploadedImages(req);
     const coverImageUrl = uploadedImages.length ? buildImageUrl(uploadedImages[0]) : null;
@@ -786,10 +786,13 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
         await connection.beginTransaction();
 
         const sql = `
-            INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url, start_location, end_location)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        const [result] = await connection.execute(sql, [title, description, price || 0, category, userId, userName, type, coverImageUrl]);
+        const [result] = await connection.execute(sql, [
+            title, description, price || 0, category, userId, userName, type, coverImageUrl,
+            start_location || null, end_location || null
+        ]);
 
         if (uploadedImages.length) {
             const placeholders = uploadedImages.map(() => '(?, ?, ?)').join(', ');
@@ -818,7 +821,7 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
 app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req, res) => {
     const listingId = req.params.id;
     const { id: userId } = req.user;
-    const { title, description, price, category, existingImageUrl } = req.body;
+    const { title, description, price, category, existingImageUrl, start_location, end_location } = req.body;
     let keepImageIds = parseKeepImageIds(req.body.keepImageIds);
     const uploadedImages = gatherUploadedImages(req);
     const newImageUrls = uploadedImages.map((file) => buildImageUrl(file));
@@ -886,10 +889,15 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
             : existingImageUrl || null;
 
         const sql = `
-            UPDATE listings SET title = ?, description = ?, price = ?, category = ?, image_url = ?
+            UPDATE listings SET title = ?, description = ?, price = ?, category = ?, image_url = ?,
+            start_location = ?, end_location = ?
             WHERE id = ? AND user_id = ?
         `;
-        await connection.execute(sql, [title, description, price, category, coverImageUrl, listingId, userId]);
+        await connection.execute(sql, [
+            title, description, price, category, coverImageUrl, 
+            start_location || null, end_location || null,
+            listingId, userId
+        ]);
 
         await connection.commit();
         deletePhysicalFiles(removedImageUrls);

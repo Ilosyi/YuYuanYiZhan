@@ -2,6 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api, { resolveAssetUrl } from '../api';
 import { getModuleTheme } from '../constants/moduleThemes';
 
+// 地点选项常量
+const LOCATION_OPTIONS = [
+    { value: 'qinyuan', label: '沁苑' },
+    { value: 'yunyuan', label: '韵苑' },
+    { value: 'zisong', label: '紫菘' },
+    { value: 'other', label: '其他 (请自填)' }
+];
+
 const CATEGORY_OPTIONS = {
     sale: [
         { value: 'electronics', label: '电子产品' },
@@ -25,26 +33,59 @@ const CATEGORY_OPTIONS = {
         { value: 'tech', label: '技术求助' },
         { value: 'others', label: '其他' },
     ],
-    lostfound: [
-        { value: 'lost', label: '寻物启事' },
-        { value: 'found', label: '失物招领' },
-    ],
+    // 修改CATEGORY_OPTIONS中的物品分类键名
+    lostfound: {
+        types: [
+            { value: 'lost', label: '寻物启事' },
+            { value: 'found', label: '失物招领' },
+        ],
+        items: [
+            { value: 'campuscard', label: '校园卡' },  // 去掉下划线
+            { value: 'studentid', label: '学生证' },    // 去掉下划线
+            { value: 'textbook', label: '教材' },
+            { value: 'bag', label: '书包' },
+            { value: 'other', label: '其他' },
+        ]
+    },
 };
 
 const getDefaultCategory = (type) => {
+    if (type === 'lostfound') {
+        // 失物招领默认值格式: "类型_物品"，默认为寻物_其他
+        return 'lost_other';
+    }
     const options = CATEGORY_OPTIONS[type] || [];
     return options[0]?.value || '';
 };
 
 const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
+    // 修改 getInitialState 函数，使用下划线命名法与后端保持一致
     const getInitialState = useCallback(() => {
         const initialType = editingItem?.type || 'sale';
+        const initialCategory = editingItem?.category || getDefaultCategory(initialType);
+        
+        // 解析失物招领的分类信息
+        let lostFoundType = '';
+        let lostFoundItem = '';
+        if (initialType === 'lostfound' && initialCategory.includes('_')) {
+            const [type, item] = initialCategory.split('_');
+            lostFoundType = type || 'lost';
+            lostFoundItem = item || 'other';
+        }
+        
         return {
             type: initialType,
             title: editingItem?.title || '',
             description: editingItem?.description || '',
             price: editingItem?.price || '',
-            category: editingItem?.category || getDefaultCategory(initialType),
+            category: initialCategory,
+            lostFoundType,
+            lostFoundItem,
+            // 修改为下划线命名法与后端保持一致
+            start_location: editingItem?.start_location || '',
+            end_location: editingItem?.end_location || '',
+            customStartLocation: editingItem?.customStartLocation || '',
+            customEndLocation: editingItem?.customEndLocation || ''
         };
     }, [editingItem]);
 
@@ -135,19 +176,54 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         resetNewImages();
     }, [resetNewImages]);
 
+    // 修改表单字段更新函数，确保使用正确的字段名
     const handleInputChange = (e) => {
         const { name, value } = e.target;
-
+        
+        // 特殊处理类型变化时重置相关字段
         if (name === 'type') {
             setFormData(prev => ({
                 ...prev,
-                type: value,
+                [name]: value,
                 category: getDefaultCategory(value),
-                price: value === 'sale' || value === 'acquire' ? prev.price : '',
+                lostFoundType: '',
+                lostFoundItem: '',
+                // 类型变化时重置地点信息
+                start_location: '',
+                end_location: '',
+                customStartLocation: '',
+                customEndLocation: ''
             }));
             return;
         }
-
+        
+        // 特殊处理分类变化时重置相关字段
+        if (name === 'category') {
+            // 失物招领的分类有特殊格式
+            if (formData.type === 'lostfound') {
+                const [type, item] = value.split('_');
+                setFormData(prev => ({
+                    ...prev,
+                    category: value,
+                    lostFoundType: type || 'lost',
+                    lostFoundItem: item || 'other'
+                }));
+            } else {
+                setFormData(prev => ({
+                    ...prev,
+                    category: value,
+                    // 非跑腿服务分类时重置地点信息
+                    ...(!['跑腿服务', 'errand'].includes(value) && {
+                        start_location: '',
+                        end_location: '',
+                        customStartLocation: '',
+                        customEndLocation: ''
+                    })
+                }));
+            }
+            return;
+        }
+        
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
@@ -196,6 +272,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
 
     const totalImages = existingImages.length + newImages.length;
 
+    // 确保 handleSubmit 函数正确处理地点字段
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsLoading(true);
@@ -203,22 +280,33 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         
         // 使用 FormData 来发送包含文件的表单
         const submissionData = new FormData();
+        
+        // 处理普通字段
         Object.entries(formData).forEach(([key, value]) => {
             if (value === null || value === undefined || key === 'image') {
                 return;
             }
-
+        
             if (key === 'price' && !(formData.type === 'sale' || formData.type === 'acquire')) {
                 return; // 非交易类帖子不需要价格
             }
-
+            
+            // 保留普通字段
             submissionData.append(key, value);
         });
-
+        
+        // 添加地点字段的映射 - 驼峰命名法转下划线命名法
+        if (formData.startLocation) {
+            submissionData.append('start_location', formData.startLocation === 'other' ? formData.customStartLocation : formData.startLocation);
+        }
+        if (formData.endLocation) {
+            submissionData.append('end_location', formData.endLocation === 'other' ? formData.customEndLocation : formData.endLocation);
+        }
+    
         if (!(formData.type === 'sale' || formData.type === 'acquire')) {
             submissionData.append('price', 0);
         }
-
+    
         newImages.forEach(({ file }) => {
             submissionData.append('images', file);
         });
@@ -261,12 +349,16 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
 
     // 根据类型决定是否显示价格字段
     const showPriceField = formData.type === 'sale' || formData.type === 'acquire';
+    
+    // 根据类型和分类决定是否显示地点字段
+    const showLocationFields = formData.type === 'sale' || formData.type === 'acquire' ? formData.category === 'service' : false;
 
     const theme = getModuleTheme(formData.type);
 
+    // 在返回的JSX中修改表单容器的类名
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
                 {/* Header */}
                 <div className={`${theme.headerBg} ${theme.headerText} px-6 py-4 flex items-center justify-between`}>
                     <div className="flex items-center gap-2">
@@ -276,9 +368,10 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                     <button type="button" onClick={onClose} className="text-white/80 hover:text-white text-xl leading-none">×</button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="p-6">
+                // 修改表单容器，添加滚动功能
+                <form onSubmit={handleSubmit} className="p-6 overflow-y-auto max-h-[calc(92vh-150px)]">
                     {/* type / category quick pill */}
-                    <div className="mb-5 flex items-center gap-2">
+                    <div className="mb-5 flex flex-wrap items-center gap-2">
                         <span className={`px-2 py-1 text-xs rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>类型</span>
                         <select name="type" value={formData.type} onChange={handleInputChange} className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}>
                             <option value="sale">出售商品</option>
@@ -286,17 +379,47 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                             <option value="help">帮帮忙</option>
                             <option value="lostfound">失物招领</option>
                         </select>
-                        <span className={`ml-3 px-2 py-1 text-xs rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>{theme.categoryLabel}</span>
-                        <select
-                            name="category"
-                            value={formData.category}
-                            onChange={handleInputChange}
-                            className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}
-                        >
-                            {(CATEGORY_OPTIONS[formData.type] || []).map(option => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                            ))}
-                        </select>
+                        
+                        {formData.type === 'lostfound' ? (
+                            <>
+                                <span className={`ml-3 px-2 py-1 text-xs rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>信息类型</span>
+                                <select
+                                    name="lostFoundType"
+                                    value={formData.lostFoundType}
+                                    onChange={handleInputChange}
+                                    className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                >
+                                    {CATEGORY_OPTIONS.lostfound.types.map(option => (
+                                        <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                </select>
+                                <span className={`ml-3 px-2 py-1 text-xs rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>物品分类</span>
+                                <select
+                                    name="lostFoundItem"
+                                    value={formData.lostFoundItem}
+                                    onChange={handleInputChange}
+                                    className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                >
+                                    {CATEGORY_OPTIONS.lostfound.items.map(option => (
+                                        <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                </select>
+                            </>
+                        ) : (
+                            <>
+                                <span className={`ml-3 px-2 py-1 text-xs rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>{theme.categoryLabel}</span>
+                                <select
+                                    name="category"
+                                    value={formData.category}
+                                    onChange={handleInputChange}
+                                    className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                >
+                                    {(CATEGORY_OPTIONS[formData.type] || []).map(option => (
+                                        <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                </select>
+                            </>
+                        )}
                     </div>
                     {error && <p className="text-red-600 bg-red-50 border border-red-200 p-3 rounded-md mb-4">{error}</p>}
 
@@ -339,6 +462,65 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                                     step="0.01"
                                     className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
                                 />
+                            </div>
+                        )}
+                        {/* 添加地点字段 */}
+                        {showLocationFields && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">出发地点*</label>
+                                    <div className="mt-1">
+                                        <select
+                                            name="startLocation"
+                                            value={formData.startLocation}
+                                            onChange={handleInputChange}
+                                            className={`w-full px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                        >
+                                            <option value="">请选择出发地点</option>
+                                            {LOCATION_OPTIONS.map(option => (
+                                                <option key={option.value} value={option.value}>{option.label}</option>
+                                            ))}
+                                        </select>
+                                        {formData.startLocation === 'other' && (
+                                            <input
+                                                type="text"
+                                                name="customStartLocation"
+                                                value={formData.customStartLocation}
+                                                onChange={handleInputChange}
+                                                placeholder="请输入自定义出发地点"
+                                                required
+                                                className={`w-full mt-2 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                            />
+                                        )}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">目的地点*</label>
+                                    <div className="mt-1">
+                                        <select
+                                            name="endLocation"
+                                            value={formData.endLocation}
+                                            onChange={handleInputChange}
+                                            className={`w-full px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                        >
+                                            <option value="">请选择目的地点</option>
+                                            {LOCATION_OPTIONS.map(option => (
+                                                <option key={option.value} value={option.value}>{option.label}</option>
+                                            ))}
+                                        </select>
+                                        {formData.endLocation === 'other' && (
+                                            <input
+                                                type="text"
+                                                name="customEndLocation"
+                                                value={formData.customEndLocation}
+                                                onChange={handleInputChange}
+                                                placeholder="请输入自定义目的地点"
+                                                required
+                                                className={`w-full mt-2 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                            />
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         )}
                         <div>

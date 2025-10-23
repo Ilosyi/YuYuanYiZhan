@@ -37,7 +37,18 @@ const CATEGORY_CONFIG = {
         all: '全部',
         lost: '寻物启事',
         found: '失物招领',
+        // 这里保持原有结构，用于顶部筛选
     },
+};
+
+// 添加物品分类配置
+// 修改LOSTFOUND_ITEM_CONFIG的键名，与PostModal.jsx保持一致
+const LOSTFOUND_ITEM_CONFIG = {
+    campuscard: '校园卡',      // 去掉下划线
+    studentid: '学生证',       // 去掉下划线
+    textbook: '教材',
+    bag: '书包',
+    other: '其他',
 };
 
 const MODE_TEXT = {
@@ -82,13 +93,34 @@ const InfoCard = ({
     mode,
     theme,
 }) => {
-    const badgeText = isLostFound ? (item.type === 'found' ? '招领' : '寻物') : item.category;
-    const badgeStyle = isLostFound
-        ? item.type === 'found'
-            ? 'bg-emerald-100 text-emerald-700'
-            : 'bg-orange-100 text-orange-700'
-        : 'bg-indigo-100 text-indigo-700';
-
+    let badgeText = '';
+    let badgeStyle = 'bg-indigo-100 text-indigo-700';
+    
+    // 修改InfoCard组件中的失物招领分类解析逻辑
+    if (isLostFound) {
+    // 修复：确保正确解析所有物品分类
+    if (item.category && item.category.includes('_')) {
+        const [type, itemType] = item.category.split('_');
+        // 调试日志帮助排查问题
+        console.log('Item category:', item.category);
+        console.log('Split parts:', type, itemType);
+        
+        // 修复：确保正确获取物品标签，增加额外的容错处理
+        const itemLabel = LOSTFOUND_ITEM_CONFIG[itemType] || '其他';
+        console.log('Item label found:', itemLabel);
+        
+        badgeText = `${type === 'found' ? '招领' : '寻物'}: ${itemLabel}`;
+    } else {
+        // 兼容旧数据格式
+        badgeText = item.type === 'found' ? '招领' : '寻物';
+    }
+    
+    badgeStyle = item.type === 'found'
+        ? 'bg-emerald-100 text-emerald-700'
+        : 'bg-orange-100 text-orange-700';
+    } else {
+        badgeText = item.category;
+    }
     const fallbackType = deriveListingTypeKey(item, mode);
     const imageUrl = resolveImageUrl(item.image_url, fallbackType);
     const hasMultipleImages = Number(item.images_count || item.image_count || 0) > 1;
@@ -590,6 +622,25 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                                 {detailListing.price ? `¥${Number(detailListing.price).toLocaleString()}` : '议价'}
                                             </div>
                                         )}
+                                        
+                                        {/* 添加出发地点和目的地点显示 */}
+                                        {(detailListing.category === '跑腿服务' || detailListing.category === 'errand') && (
+                                            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                                                {detailListing.start_location && (
+                                                    <div className="flex items-start mb-2">
+                                                        <span className="text-sm font-medium text-gray-600 w-16">出发地点：</span>
+                                                        <span className="text-gray-800">{detailListing.start_location}</span>
+                                                    </div>
+                                                )}
+                                                {detailListing.end_location && (
+                                                    <div className="flex items-start">
+                                                        <span className="text-sm font-medium text-gray-600 w-16">目的地点：</span>
+                                                        <span className="text-gray-800">{detailListing.end_location}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                        
                                         {galleryImages.length > 0 && (
                                             <div className="space-y-3">
                                                 <div className="relative">

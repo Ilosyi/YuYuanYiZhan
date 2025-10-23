@@ -1140,6 +1140,25 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
                                                 {detailListing.price ? `¥${Number(detailListing.price).toLocaleString()}` : '议价'}
                                             </div>
                                         )}
+
+                                        {/* 添加出发地点和目的地点显示 */}
+                                        {(detailListing.category === '跑腿服务' || detailListing.category === 'errand') && (
+                                            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                                                {detailListing.start_location && (
+                                                    <div className="flex items-start mb-2">
+                                                        <span className="text-sm font-medium text-gray-600 w-16">出发地点：</span>
+                                                        <span className="text-gray-800">{detailListing.start_location}</span>
+                                                    </div>
+                                                )}
+                                                {detailListing.end_location && (
+                                                    <div className="flex items-start">
+                                                        <span className="text-sm font-medium text-gray-600 w-16">目的地点：</span>
+                                                        <span className="text-gray-800">{detailListing.end_location}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {detailGalleryImages.length > 0 && (
                                             <div className="space-y-3">
                                                 <div className="relative">
