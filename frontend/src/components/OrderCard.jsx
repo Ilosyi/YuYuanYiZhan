@@ -3,6 +3,8 @@
 import React from 'react';
 import api, { resolveAssetUrl } from '../api';
 import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
+import { useConfirm } from '../context/ConfirmContext';
+import { useToast } from '../context/ToastContext';
 
 const deriveListingTypeKey = (rawType) => {
     if (!rawType) return 'sale';
@@ -22,22 +24,51 @@ const OrderCard = ({ order, role, onUpdate, onContact = () => {} }) => {
     const resolvedImage = resolveAssetUrl(order.listing_image_url);
     const imageUrl = resolvedImage || getDefaultListingImage(listingTypeKey) || FALLBACK_IMAGE;
 
+    const confirm = useConfirm();
+    const toast = useToast();
     const handleUpdateStatus = async (newStatus) => {
-        const actionText = {
-            to_ship: '模拟支付成功！卖家将为您发货。',
-            to_receive: '确定要标记为“已发货”吗？',
-            completed: '确定您已收到商品吗？此操作不可逆。',
-            cancelled: '确定要取消这个订单吗？'
+        const config = {
+            to_ship: {
+                title: '确认支付',
+                message: '模拟支付成功！卖家将为您发货。',
+                tone: 'default',
+                confirmText: '确认支付',
+            },
+            to_receive: {
+                title: '确认发货',
+                message: '确定要标记为“已发货”吗？',
+                tone: 'default',
+                confirmText: '我已发货',
+            },
+            completed: {
+                title: '确认收货',
+                message: '确定您已收到商品吗？此操作不可逆。',
+                tone: 'warning',
+                confirmText: '确认收货',
+            },
+            cancelled: {
+                title: '取消订单',
+                message: '确定要取消这个订单吗？',
+                tone: 'danger',
+                confirmText: '取消订单',
+            },
         }[newStatus];
 
-        if (!window.confirm(actionText)) return;
+        const ok = await confirm({
+            title: config.title,
+            message: config.message,
+            tone: config.tone,
+            confirmText: config.confirmText,
+            cancelText: '返回',
+        });
+        if (!ok) return;
 
         try {
             await api.put(`/api/orders/${order.id}/status`, { newStatus });
-            alert('操作成功！');
+            toast.success('操作成功！');
             onUpdate(); // 通知父组件刷新列表
         } catch (error) {
-            alert(error.response?.data?.message || '操作失败，请刷新后重试。');
+            toast.error(error.response?.data?.message || '操作失败，请刷新后重试。');
             console.error(error);
         }
     };

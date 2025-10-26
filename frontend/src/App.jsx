@@ -11,6 +11,8 @@ import MyOrdersPage from './pages/MyOrdersPage';
 import MyMessagesPage from './pages/MyMessagesPage';
 import UserCenterPage from './pages/UserCenterPage';
 import PostModal from './components/PostModal';
+import { ConfirmProvider } from './context/ConfirmContext';
+import { ToastProvider } from './context/ToastContext';
 
 // Header 组件，现在包含用户信息和登出按钮
 const Header = ({ activeNav, setActiveNav, onPostNewClick }) => {
@@ -135,7 +137,11 @@ function MainApp() {
 function App() {
     return (
         <AuthProvider>
-            <MainApp />
+            <ToastProvider>
+                <ConfirmProvider>
+                    <MainApp />
+                </ConfirmProvider>
+            </ToastProvider>
         </AuthProvider>
     );
 }

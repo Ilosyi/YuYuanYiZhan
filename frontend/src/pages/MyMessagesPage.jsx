@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api, { API_BASE_URL, resolveAssetUrl } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { useConfirm } from '../context/ConfirmContext';
+import { useToast } from '../context/ToastContext';
 
 const formatTime = (value) => {
     if (!value) return '';
@@ -445,27 +447,34 @@ const MyMessagesPage = () => {
         fetchMessages(conversation.otherUserId, conversation.otherUsername, { listingHint: meta });
     };
 
+    const confirm = useConfirm();
+    const toast = useToast();
     const handleListingAction = async () => {
         if (actionLoading) return;
         if (!activeListing) return;
         if (activeListing.type === 'sale') {
             if (!userId) {
-                alert('请登录后再购买。');
+                toast.info('请登录后再购买。');
                 return;
             }
             if (activeListing.ownerId && activeListing.ownerId === userId) {
-                alert('这是您自己发布的商品。');
+                toast.info('这是您自己发布的商品。');
                 return;
             }
-            if (!window.confirm(`确定以 ¥${Number(activeListing.price || 0).toLocaleString()} 购买「${activeListing.title}」吗？`)) {
-                return;
-            }
+            const ok = await confirm({
+                title: '确认购买',
+                message: `确定以 ¥${Number(activeListing.price || 0).toLocaleString()} 购买「${activeListing.title}」吗？`,
+                tone: 'default',
+                confirmText: '下单',
+                cancelText: '取消',
+            });
+            if (!ok) return;
             setActionLoading(true);
             try {
                 await api.post('/api/orders', { listingId: activeListing.id });
-                alert('下单成功！可在“我的订单”中查看进度。');
+                toast.success('下单成功！可在“我的订单”中查看进度。');
             } catch (error) {
-                alert(error.response?.data?.message || '下单失败，请稍后再试。');
+                toast.error(error.response?.data?.message || '下单失败，请稍后再试。');
             } finally {
                 setActionLoading(false);
             }
@@ -480,7 +489,7 @@ const MyMessagesPage = () => {
         const text = inputValue.trim();
         if (!text) return;
         if (!wsConnected || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-            alert('消息通道未连接，请稍后再试。');
+            toast.error('消息通道未连接，请稍后再试。');
             return;
         }
         wsRef.current.send(

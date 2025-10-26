@@ -7,6 +7,7 @@ import ListingCard from '../components/ListingCard';
 import { getModuleTheme } from '../constants/moduleThemes';
 import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 import { useAuth } from '../context/AuthContext';
+import { useConfirm } from '../context/ConfirmContext';
 
 const DEFAULT_AVATAR = resolveAssetUrl('/default-images/default-avatar.jpg');
 
@@ -107,6 +108,7 @@ const FollowUserCard = ({ item, onToggleFollow, onPreviewListings }) => {
 
 const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
     const { user: authUser } = useAuth();
+    const confirm = useConfirm();
     const effectiveUser = currentUser || authUser;
 
     const [profile, setProfile] = useState(null);
@@ -617,14 +619,16 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
             setFeedback('请先登录再进行购买。');
             return;
         }
-        const numericPrice = Number(listing.price);
-        const hasValidPrice = Number.isFinite(numericPrice) && numericPrice > 0;
-        const confirmMessage = hasValidPrice
-            ? `确定以 ¥${numericPrice.toLocaleString()} 购买 “${listing.title}” 吗？`
-            : `确定购买 “${listing.title}” 吗？`;
-        if (!window.confirm(confirmMessage)) {
-            return;
-        }
+    const numericPrice = Number(listing.price);
+    const hasValidPrice = Number.isFinite(numericPrice) && numericPrice > 0;
+        const ok = await confirm({
+            title: '确认购买',
+            message: hasValidPrice ? `确定以 ¥${numericPrice.toLocaleString()} 购买 “${listing.title}” 吗？` : `确定购买 “${listing.title}” 吗？`,
+            tone: 'default',
+            confirmText: '下单',
+            cancelText: '取消',
+        });
+        if (!ok) return;
         try {
             setDetailError('');
             await api.post('/api/orders', { listingId: listing.id });
@@ -635,7 +639,7 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
             console.error('下单失败:', error);
             setDetailError(error.response?.data?.message || '下单失败，请稍后再试。');
         }
-    }, [effectiveUser, handleCloseListingDetail, onNavigate]);
+    }, [effectiveUser, handleCloseListingDetail, onNavigate, confirm]);
 
     const handleToggleFavorite = async (item, shouldFavorite) => {
         if (!item?.id) return;

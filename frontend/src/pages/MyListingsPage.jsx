@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import MyListingCard from '../components/MyListingCard'; // 假设 MyListingCard 是一个独立组件
+import { useConfirm } from '../context/ConfirmContext';
+import { useToast } from '../context/ToastContext';
 
 const MyListingsPage = ({ currentUser, onEditListing }) => {
     const [myListings, setMyListings] = useState([]);
@@ -38,18 +40,27 @@ const MyListingsPage = ({ currentUser, onEditListing }) => {
         fetchMyListings();
     }, [fetchMyListings]);
 
+    const toast = useToast();
     const handleDelete = async (listingId) => {
-        if (window.confirm('确定要删除这个发布吗？此操作不可恢复。')) {
-            try {
-                await api.delete(`/api/listings/${listingId}`);
-                fetchMyListings();
-                alert('删除成功！');
-            } catch (err) {
-                console.error(err);
-                alert(err.response?.data?.message || '删除失败，请稍后再试。');
-            }
+        const ok = await confirm({
+            title: '删除发布',
+            message: '确定要删除这个发布吗？此操作不可恢复。',
+            tone: 'danger',
+            confirmText: '删除',
+            cancelText: '取消',
+        });
+        if (!ok) return;
+        try {
+            await api.delete(`/api/listings/${listingId}`);
+            fetchMyListings();
+            toast.success('删除成功！');
+        } catch (err) {
+            console.error(err);
+            toast.error(err.response?.data?.message || '删除失败，请稍后再试。');
         }
     };
+
+    const confirm = useConfirm();
 
     return (
         <div className="min-h-full bg-gradient-to-b from-gray-50 to-white">

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api, { resolveAssetUrl } from '../api';
 import { getModuleTheme } from '../constants/moduleThemes';
+import { useToast } from '../context/ToastContext';
 
 // 地点选项常量
 const LOCATION_OPTIONS = [
@@ -108,6 +109,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     const [error, setError] = useState('');
 
     const MAX_IMAGE_COUNT = 10;
+    const toast = useToast();
 
     const resetNewImages = useCallback(() => {
         setNewImages(prev => {
@@ -261,7 +263,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
 
         const availableSlots = MAX_IMAGE_COUNT - existingImages.length - newImages.length;
         if (availableSlots <= 0) {
-            alert(`最多上传 ${MAX_IMAGE_COUNT} 张图片`);
+            toast.warning(`最多上传 ${MAX_IMAGE_COUNT} 张图片`);
             event.target.value = '';
             return;
         }
@@ -275,7 +277,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         setNewImages(prev => [...prev, ...mapped]);
 
         if (selectedFiles.length < files.length) {
-            alert(`已达到最多 ${MAX_IMAGE_COUNT} 张图片限制，部分图片未添加。`);
+            toast.warning(`已达到最多 ${MAX_IMAGE_COUNT} 张图片限制，部分图片未添加。`);
         }
 
         event.target.value = '';

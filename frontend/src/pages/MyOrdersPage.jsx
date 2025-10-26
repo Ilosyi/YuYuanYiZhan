@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import api, { resolveAssetUrl } from '../api';
 import { useAuth } from '../context/AuthContext';
 import OrderCard from '../components/OrderCard';
+import { useToast } from '../context/ToastContext';
 import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImages';
 
 const deriveListingTypeKey = (rawType) => {
@@ -16,6 +17,7 @@ const deriveListingTypeKey = (rawType) => {
 
 const MyOrdersPage = ({ currentUser, onNavigate = () => {} }) => {
     const { user } = useAuth();
+    const toast = useToast();
     const [orders, setOrders] = useState([]);
     const [activeTab, setActiveTab] = useState('buyer'); // 'buyer' or 'seller'
     const [filterStatus, setFilterStatus] = useState('all');
@@ -59,11 +61,11 @@ const MyOrdersPage = ({ currentUser, onNavigate = () => {} }) => {
 
     const handleContact = useCallback((order, roleKey) => {
         if (!user) {
-            alert('请先登录后再联系对方。');
+            toast.info('请先登录后再联系对方。');
             return;
         }
         if (!order) {
-            alert('暂时无法处理该订单。');
+            toast.error('暂时无法处理该订单。');
             return;
         }
 
@@ -71,11 +73,11 @@ const MyOrdersPage = ({ currentUser, onNavigate = () => {} }) => {
         const counterpartName = roleKey === 'buyer' ? order.seller_name : order.buyer_name;
 
         if (!counterpartId) {
-            alert('无法获取对方信息。');
+            toast.error('无法获取对方信息。');
             return;
         }
         if (counterpartId === user.id) {
-            alert('这是您自己的订单记录。');
+            toast.info('这是您自己的订单记录。');
             return;
         }
 

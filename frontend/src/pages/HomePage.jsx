@@ -6,6 +6,8 @@ import { getDefaultListingImage, FALLBACK_IMAGE } from '../constants/defaultImag
 import { getModuleTheme } from '../constants/moduleThemes';
 import ListingCard from '../components/ListingCard';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
 
 const CATEGORY_CONFIG = {
     sale: {
@@ -371,23 +373,29 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     }, [isDetailOpen]);
 
+    const confirm = useConfirm();
+    const toast = useToast();
     const handlePurchase = async (item) => {
         if (!user) {
-            alert('请先登录再进行购买。');
+            toast.info('请先登录再进行购买。');
             return;
         }
         const numericPrice = Number(item.price);
         const hasValidPrice = Number.isFinite(numericPrice) && numericPrice > 0;
-        const message = hasValidPrice
-            ? `确定以 ¥${numericPrice.toLocaleString()} 购买 "${item.title}" 吗？`
-            : `确定购买 "${item.title}" 吗？`;
-        if (window.confirm(message)) {
+        const ok = await confirm({
+            title: '确认购买',
+            message: hasValidPrice ? `确定以 ¥${numericPrice.toLocaleString()} 购买 “${item.title}” 吗？` : `确定购买 “${item.title}” 吗？`,
+            tone: 'default',
+            confirmText: '下单',
+            cancelText: '取消',
+        });
+        if (ok) {
             try {
                 await api.post('/api/orders', { listingId: item.id });
-                alert('下单成功！您可以在“我的订单”中查看进度。');
+                toast.success('下单成功！您可以在“我的订单”中查看进度。');
                 onNavigate('myOrders');
             } catch (err) {
-                alert(err.response?.data?.message || '下单失败，请稍后再试。');
+                toast.error(err.response?.data?.message || '下单失败，请稍后再试。');
                 fetchListings();
             }
         }
@@ -395,7 +403,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
 
     const handleToggleFavorite = async (item, shouldFavorite) => {
         if (!user) {
-            alert('请先登录后再收藏。');
+            toast.info('请先登录后再收藏。');
             return;
         }
         if (!item?.id) return;
@@ -417,22 +425,22 @@ const HomePage = ({ onNavigate = () => {} }) => {
             });
         } catch (error) {
             console.error('收藏操作失败:', error);
-            alert(error.response?.data?.message || '收藏操作失败，请稍后再试。');
+            toast.error(error.response?.data?.message || '收藏操作失败，请稍后再试。');
         }
     };
 
     const handleContact = (item) => {
         if (!user) {
-            alert('请先登录后再联系对方。');
+            toast.info('请先登录后再联系对方。');
             return;
         }
         if (!item.user_id) {
-            alert('无法获取发布者信息。');
+            toast.error('无法获取发布者信息。');
             return;
         }
 
         if (item.user_id === user.id) {
-            alert('这是您自己发布的内容哦。');
+            toast.info('这是您自己发布的内容哦。');
             return;
         }
 
@@ -497,12 +505,12 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const submitReply = async () => {
         if (!detailListing) return;
         if (!user) {
-            alert('请登录后再回复。');
+            toast.info('请登录后再回复。');
             return;
         }
         const content = replyContent.trim();
         if (!content) {
-            alert('回复内容不能为空。');
+            toast.warning('回复内容不能为空。');
             return;
         }
         try {
@@ -511,7 +519,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
             await loadDetail(detailListing.id);
         } catch (err) {
             console.error(err);
-            alert(err.response?.data?.message || '回复失败，请稍后再试。');
+            toast.error(err.response?.data?.message || '回复失败，请稍后再试。');
         }
     };
 
