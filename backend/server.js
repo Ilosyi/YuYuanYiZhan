@@ -1,6 +1,6 @@
 // =================================================================
 // “喻园易站” - 后端服务器主文件
-// 版本: 1.3 - 实现完整的订单状态流转API
+// 版本: 4.1
 // =================================================================
 
 require('dotenv').config();
@@ -14,6 +14,7 @@ const cors = require('cors');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
 const { WebSocketServer } = require('ws');
 
 const app = express();
@@ -23,8 +24,18 @@ const uploadsRoot = path.join(__dirname, 'uploads');
 const defaultImagesRoot = path.join(__dirname, '..', 'frontend', 'public', 'default-images');
 const DEFAULT_AVATAR_URL = '/default-images/default-avatar.jpg';
 
+/**
+ * 使用默认头像作为兜底
+ * @param {string|null|undefined} value 头像 URL
+ * @returns {string} 可用的头像 URL
+ */
 const withAvatarFallback = (value) => value || DEFAULT_AVATAR_URL;
 
+/**
+ * 将以 /uploads/ 开头的相对路径解析为磁盘绝对路径（并限制在 uploads 目录内）
+ * @param {string} value 例如 '/uploads/xxx.jpg'
+ * @returns {string|null} 绝对路径或 null（不合法时）
+ */
 const resolveUploadAbsolutePath = (value) => {
     if (!value) return null;
     const sanitized = value.replace(/^[\\/]+/, '');
@@ -36,6 +47,11 @@ const resolveUploadAbsolutePath = (value) => {
     return absolutePath;
 };
 
+/**
+ * 归一化获取本次请求上传的图片（支持 images[] 与 image）
+ * @param {import('express').Request} req
+ * @returns {Array<Express.Multer.File>}
+ */
 const gatherUploadedImages = (req) => {
     const collected = [];
     if (req.files?.images?.length) {
@@ -47,10 +63,20 @@ const gatherUploadedImages = (req) => {
     return collected;
 };
 
+/**
+ * 根据 Multer 保存的文件对象构造对外可访问的图片 URL
+ * @param {Express.Multer.File} file
+ * @returns {string}
+ */
 const buildImageUrl = (file) => `/uploads/${file.filename}`;
 
+/** 判断是否是本服务保存的上传文件 URL */
 const isLocalUploadUrl = (value) => typeof value === 'string' && value.startsWith('/uploads/');
 
+/**
+ * 删除一组上传文件（物理文件），自动进行路径安全校验
+ * @param {string[]} imageUrls '/uploads/...' 数组
+ */
 const deletePhysicalFiles = (imageUrls = []) => {
     imageUrls.forEach((url) => {
         const absolute = resolveUploadAbsolutePath(url);
@@ -64,6 +90,11 @@ const deletePhysicalFiles = (imageUrls = []) => {
     });
 };
 
+/**
+ * 解析客户端提交的保留图片 ID 列表
+ * @param {string|any[]} rawValue JSON 字符串或数组
+ * @returns {number[]} 正整数 ID 列表
+ */
 const parseKeepImageIds = (rawValue) => {
     if (!rawValue) return [];
     try {
@@ -83,11 +114,13 @@ const parseKeepImageIds = (rawValue) => {
 // =================================================================
 // 1. 中间件配置 (Middleware Configuration)
 // =================================================================
+// 允许的 CORS 来源白名单（逗号分隔），为空表示放行所有来源
 const allowedOrigins = (process.env.CORS_ORIGINS || '')
     .split(',')
     .map(origin => origin.trim())
     .filter(Boolean);
 
+/** CORS 配置：若未配置白名单或请求无 Origin，则放行；否则仅允许白名单内域名 */
 const corsOptions = {
     origin: (origin, callback) => {
         if (!origin || allowedOrigins.length === 0) {
@@ -111,6 +144,11 @@ app.use('/default-images', express.static(defaultImagesRoot));
 // =================================================================
 // 2. 数据库连接池 (Database Pool)
 // =================================================================
+/**
+ * MySQL 连接池
+ * - 通过环境变量读取连接信息
+ * - 设置 timezone 为东八区，便于与前端展示一致
+ */
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -122,6 +160,11 @@ const pool = mysql.createPool({
     timezone: '+08:00'
 });
 
+/**
+ * 数据库初始化/修复（幂等）：
+ * - 创建 messages / listing_images / user_profiles / user_follows / user_favorites 表
+ * - 将 listings.image_url 回填为第一张图到 listing_images（若未同步）
+ */
 async function initializeDatabase() {
     const createMessagesTableSQL = `
         CREATE TABLE IF NOT EXISTS messages (
@@ -189,12 +232,29 @@ async function initializeDatabase() {
             INDEX idx_listing (listing_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `;
+    const createEmailVerificationsTableSQL = `
+        CREATE TABLE IF NOT EXISTS email_verifications (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            student_id VARCHAR(16) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            code_hash VARCHAR(255) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            consumed TINYINT(1) NOT NULL DEFAULT 0,
+            request_ip VARCHAR(64) NULL,
+            attempt_count INT NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_student (student_id),
+            INDEX idx_email (email),
+            INDEX idx_expires (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `;
     try {
         await pool.execute(createMessagesTableSQL);
         await pool.execute(createListingImagesTableSQL);
         await pool.execute(createUserProfilesTableSQL);
         await pool.execute(createUserFollowsTableSQL);
         await pool.execute(createUserFavoritesTableSQL);
+        await pool.execute(createEmailVerificationsTableSQL);
         await pool.execute(`
             INSERT INTO listing_images (listing_id, image_url, sort_order)
             SELECT l.id, l.image_url, 0
@@ -215,6 +275,9 @@ initializeDatabase();
 // =================================================================
 // 3. 文件上传配置 (Multer File Upload)
 // =================================================================
+/**
+ * Multer 文件存储：保存到 uploads 目录，文件名 image-<timestamp>-<rand>.<ext>
+ */
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, 'uploads/'),
     filename: (req, file, cb) => {
@@ -222,6 +285,9 @@ const storage = multer.diskStorage({
         cb(null, 'image-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
+/**
+ * 通用上传中间件：限制大小为 5MB，仅允许图片 MIME 类型
+ */
 const upload = multer({
     storage: storage,
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
@@ -234,12 +300,17 @@ const upload = multer({
     }
 });
 
+/** 帖子图片上传（支持 images[] 多图与 image 单图） */
 const uploadListingImages = upload.fields([
     { name: 'images', maxCount: 10 },
     { name: 'image', maxCount: 1 }
 ]);
+/** 用户头像上传（单文件） */
 const uploadAvatar = upload.single('avatar');
 
+/**
+ * 规范化可空字符串：去空、空转 null、超长截断
+ */
 const sanitizeNullableString = (value, maxLength) => {
     if (value === undefined || value === null) {
         return null;
@@ -251,6 +322,9 @@ const sanitizeNullableString = (value, maxLength) => {
     return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
 };
 
+/**
+ * 获取用户资料快照（基本信息 + 扩展资料 + 计数 + 与当前用户关系）
+ */
 const getUserProfileSnapshot = async (targetUserId, currentUserId = null) => {
     const [userRows] = await pool.execute(
         'SELECT id, username, created_at FROM users WHERE id = ?',
@@ -324,6 +398,9 @@ const getUserProfileSnapshot = async (targetUserId, currentUserId = null) => {
     };
 };
 
+/**
+ * 构建关注/粉丝列表，附带与当前用户的互相关注状态
+ */
 const buildFollowList = async (targetUserId, currentUserId, mode = 'followers') => {
     const isFollowersMode = mode === 'followers';
     const selectColumn = isFollowersMode ? 'uf.follower_id' : 'uf.following_id';
@@ -365,6 +442,7 @@ const buildFollowList = async (targetUserId, currentUserId, mode = 'followers') 
     }));
 };
 
+/** 查询用户收藏的帖子列表（附 images_count） */
 const fetchFavoriteListings = async (userId) => {
     const [rows] = await pool.execute(
         `SELECT 
@@ -383,6 +461,9 @@ const fetchFavoriteListings = async (userId) => {
 // =================================================================
 // 4. 认证中间件 (Authentication Middleware)
 // =================================================================
+/**
+ * JWT 认证：从 Authorization: Bearer <token> 解析校验，成功后写入 req.user
+ */
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -400,6 +481,10 @@ const authenticateToken = (req, res, next) => {
 // =================================================================
 
 // --- 5.1 用户认证路由 (Auth Routes) ---
+/**
+ * POST /api/auth/register | /api/register
+ * 注册用户（校验密码长度、处理重复用户名）
+ */
 const handleRegister = async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password || password.length < 6) {
@@ -423,6 +508,10 @@ const handleRegister = async (req, res) => {
 app.post('/api/auth/register', handleRegister);
 app.post('/api/register', handleRegister);
 
+/**
+ * POST /api/auth/login
+ * 用户登录，签发 1 天有效的 accessToken
+ */
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -443,7 +532,206 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+// --- 5.1.0 邮箱验证码注册 (Email Verification Sign-up) ---
+
+const isValidStudentId = (raw) => {
+    if (typeof raw !== 'string') return false;
+    const s = raw.trim();
+    // 首字母允许 U/M/I/D（大小写均可），后接 20yy + 5 位流水号
+    const m = s.match(/^[UMIDumid](20\d{2})(\d{5})$/);
+    if (!m) return false;
+    const year = Number(m[1]);
+    const serial = Number(m[2]);
+    if (year < 2000 || year > 2099) return false;
+    if (serial < 10001 || serial > 99999) return false;
+    return true;
+};
+
+const buildEduEmailFromStudentId = (studentId) => {
+    const s = String(studentId || '').trim();
+    if (!s) return '@hust.edu.cn';
+    const local = s.charAt(0).toLowerCase() + s.slice(1);
+    return `${local}@hust.edu.cn`;
+};
+
+const createMailTransporter = () => {
+    // SMTP_ENABLED 未设置时默认启用（只要配置齐全）
+    const enabled = (process.env.SMTP_ENABLED || 'true').toLowerCase() === 'true';
+    if (!enabled) return null;
+    const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS } = process.env;
+    if (!SMTP_HOST || !SMTP_PORT) return null;
+    const secure = String(SMTP_SECURE || 'false').toLowerCase() === 'true';
+    const auth = SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined;
+    try {
+        return nodemailer.createTransport({ host: SMTP_HOST, port: Number(SMTP_PORT), secure, auth });
+    } catch (e) {
+        console.warn('SMTP transporter 创建失败，将回退为日志模式:', e.message);
+        return null;
+    }
+};
+
+const sendVerificationEmail = async (to, code) => {
+    const transporter = createMailTransporter();
+    const from = process.env.SMTP_FROM || 'noreply@hust.edu.cn';
+    const subject = '喻园易站 - 邮箱验证码';
+    const text = `您的验证码是：${code}\n10 分钟内有效。如非本人操作请忽略。`;
+    if (!transporter) {
+        console.log(`[DevEmail] To: ${to}\nSubject: ${subject}\n${text}`);
+        return { dev: true };
+    }
+    await transporter.sendMail({ from, to, subject, text });
+    return { dev: false };
+};
+
+// 申请验证码
+app.post('/api/auth/request-email-code', async (req, res) => {
+    const rawStudentId = req.body?.studentId;
+    const studentId = sanitizeNullableString(rawStudentId, 16);
+    if (!studentId || !isValidStudentId(studentId)) {
+        return res.status(400).json({ message: '学号格式不合法，应为 uyyyyxxxxx（xxxxx 在 10001-99999）。' });
+    }
+    const email = buildEduEmailFromStudentId(studentId);
+
+    try {
+        // 频率限制：60 秒内不可重复申请
+        const [recent] = await pool.execute(
+            `SELECT id, created_at, expires_at FROM email_verifications
+             WHERE student_id = ? AND consumed = 0
+             ORDER BY id DESC LIMIT 1`,
+            [studentId]
+        );
+        if (recent.length) {
+            const lastAt = new Date(recent[0].created_at).getTime();
+            if (Date.now() - lastAt < 60 * 1000) {
+                return res.status(429).json({ message: '请求过于频繁，请稍后再试。' });
+            }
+        }
+
+        const code = String(Math.floor(100000 + Math.random() * 900000)); // 6 位数字
+        const codeHash = await bcrypt.hash(code, 10);
+        const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 分钟
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || null;
+
+        await pool.execute(
+            `INSERT INTO email_verifications (student_id, email, code_hash, expires_at, request_ip)
+             VALUES (?, ?, ?, ?, ?)`,
+            [studentId, email, codeHash, expires, String(ip || '')]
+        );
+
+        await sendVerificationEmail(email, code);
+        res.json({ message: '验证码已发送，请查收邮箱（10 分钟内有效）。' });
+    } catch (error) {
+        console.error('request-email-code error:', error.message);
+        res.status(500).json({ message: '发送验证码失败，请稍后再试。' });
+    }
+});
+
+// 校验验证码并注册
+app.post('/api/auth/verify-email-code', async (req, res) => {
+    const rawStudentId = req.body?.studentId;
+    const code = String(req.body?.code || '').trim();
+    let username = sanitizeNullableString(req.body?.username, 255);
+    const password = String(req.body?.password || '');
+
+    if (!rawStudentId || !isValidStudentId(rawStudentId)) {
+        return res.status(400).json({ message: '学号格式不合法。' });
+    }
+    if (!code || code.length !== 6) {
+        return res.status(400).json({ message: '验证码格式不正确。' });
+    }
+    if (!password || password.length < 6) {
+        return res.status(400).json({ message: '密码长度至少 6 位。' });
+    }
+    const studentId = rawStudentId.trim();
+    const email = buildEduEmailFromStudentId(studentId);
+
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        // 1) 校验验证码：未过期、未使用，取最新一条
+        const [vRows] = await connection.execute(
+            `SELECT * FROM email_verifications
+             WHERE student_id = ? AND consumed = 0 AND expires_at > NOW()
+             ORDER BY id DESC LIMIT 1`,
+            [studentId]
+        );
+        if (!vRows.length) {
+            await connection.rollback();
+            return res.status(400).json({ message: '未找到有效的验证码，请重新获取。' });
+        }
+        const record = vRows[0];
+        if (record.attempt_count >= 5) {
+            await connection.rollback();
+            return res.status(429).json({ message: '尝试过多，请重新获取验证码。' });
+        }
+
+        const match = await bcrypt.compare(code, record.code_hash);
+        if (!match) {
+            await connection.execute('UPDATE email_verifications SET attempt_count = attempt_count + 1 WHERE id = ?', [record.id]);
+            await connection.commit();
+            return res.status(400).json({ message: '验证码不正确。' });
+        }
+
+        // 2) 标记验证码已使用
+        await connection.execute('UPDATE email_verifications SET consumed = 1 WHERE id = ?', [record.id]);
+
+        // 3) 学号是否已被绑定
+        const [[dupProfile]] = await connection.execute(
+            'SELECT user_id FROM user_profiles WHERE student_id = ? LIMIT 1',
+            [studentId]
+        );
+        if (dupProfile && dupProfile.user_id) {
+            await connection.rollback();
+            return res.status(409).json({ message: '该学号已注册，请直接登录。' });
+        }
+
+        // 4) 创建用户 + 资料
+        if (!username) {
+            username = studentId.toLowerCase();
+        }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        let newUserId;
+        try {
+            const [result] = await connection.execute(
+                'INSERT INTO users (username, password) VALUES (?, ?)',
+                [username, hashedPassword]
+            );
+            newUserId = result.insertId;
+        } catch (e) {
+            if (e.code === 'ER_DUP_ENTRY') {
+                await connection.rollback();
+                return res.status(409).json({ message: '用户名已被占用，请更换后重试。' });
+            }
+            throw e;
+        }
+
+        await connection.execute(
+            `INSERT INTO user_profiles (user_id, student_id, avatar_url)
+             VALUES (?, ?, NULL)
+             ON DUPLICATE KEY UPDATE student_id = VALUES(student_id)`,
+            [newUserId, studentId]
+        );
+
+        await connection.commit();
+
+        // 5) 签发 token
+        const tokenPayload = { id: newUserId, username };
+        const accessToken = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '1d' });
+        res.status(201).json({ message: '注册成功', accessToken, user: tokenPayload });
+    } catch (error) {
+        if (connection) await connection.rollback();
+        console.error('verify-email-code error:', error.message);
+        res.status(500).json({ message: '注册失败，请稍后再试。' });
+    } finally {
+        if (connection) connection.release();
+    }
+});
+
 // --- 5.1.1 用户资料路由 (User Profile Routes) ---
+
+/** GET /api/users/me 获取当前登录用户资料快照 */
 app.get('/api/users/me', authenticateToken, async (req, res) => {
     try {
         const snapshot = await getUserProfileSnapshot(req.user.id, req.user.id);
@@ -456,6 +744,7 @@ app.get('/api/users/me', authenticateToken, async (req, res) => {
     }
 });
 
+/** GET /api/users/:id/profile 查看任意用户的公开资料（需登录） */
 app.get('/api/users/:id/profile', authenticateToken, async (req, res) => {
     const targetId = Number(req.params.id);
     if (!Number.isInteger(targetId) || targetId <= 0) {
@@ -471,27 +760,35 @@ app.get('/api/users/:id/profile', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Failed to load profile.', error: error.message });
     }
 });
-
+// --- 5.1.2 用户资料更新路由 (User Profile Update Routes) ---
+/**
+ * PUT /api/users/me 更新个人资料
+ * 注意：student_id 在注册时绑定，注册后不可修改（包括普通注册时为空的情况）。
+ * avatarUrl 仅在明确提供时覆盖，未提供则保持不变。
+ */
 app.put('/api/users/me', authenticateToken, async (req, res) => {
     const displayName = sanitizeNullableString(req.body.displayName, 255);
-    const studentId = sanitizeNullableString(req.body.studentId, 50);
     const contactPhone = sanitizeNullableString(req.body.contactPhone, 50);
     const avatarUrl = sanitizeNullableString(req.body.avatarUrl, 500);
     const bio = sanitizeNullableString(req.body.bio, 2000);
 
     try {
+        // student_id 为注册时只读字段，若请求体包含则拒绝
+        if (Object.prototype.hasOwnProperty.call(req.body, 'studentId')) {
+            return res.status(400).json({ message: '学号在注册时绑定，注册后不可修改。' });
+        }
+
         await pool.execute(
-            `INSERT INTO user_profiles (user_id, display_name, student_id, contact_phone, avatar_url, bio)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO user_profiles (user_id, display_name, contact_phone, avatar_url, bio)
+             VALUES (?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                  display_name = VALUES(display_name),
-                 student_id = VALUES(student_id),
                  contact_phone = VALUES(contact_phone),
                  /* 仅当客户端明确提供 avatarUrl 时才更新；否则保留原值 */
                  avatar_url = IFNULL(VALUES(avatar_url), avatar_url),
                  bio = VALUES(bio)`
             ,
-            [req.user.id, displayName, studentId, contactPhone, avatarUrl, bio]
+            [req.user.id, displayName, contactPhone, avatarUrl, bio]
         );
 
     const snapshot = await getUserProfileSnapshot(req.user.id, req.user.id);
@@ -500,7 +797,10 @@ app.put('/api/users/me', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Failed to update profile.', error: error.message });
     }
 });
-
+// --- 5.1.3 用户头像上传路由 (User Avatar Upload Route) ---
+/**
+ * POST /api/users/me/avatar 上传并更新头像；成功后删除旧头像文件（若为本地上传）
+ */
 app.post('/api/users/me/avatar', authenticateToken, uploadAvatar, async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: 'Avatar file is required.' });
@@ -535,7 +835,8 @@ app.post('/api/users/me/avatar', authenticateToken, uploadAvatar, async (req, re
         res.status(500).json({ message: 'Failed to update avatar.', error: error.message });
     }
 });
-
+// --- 5.1.4 用户关注路由 (User Follow Routes) ---
+/** POST /api/users/:id/follow 关注用户 */
 app.post('/api/users/:id/follow', authenticateToken, async (req, res) => {
     const targetId = Number(req.params.id);
     const currentUserId = req.user.id;
@@ -566,6 +867,7 @@ app.post('/api/users/:id/follow', authenticateToken, async (req, res) => {
     }
 });
 
+/** DELETE /api/users/:id/follow 取消关注 */
 app.delete('/api/users/:id/follow', authenticateToken, async (req, res) => {
     const targetId = Number(req.params.id);
     const currentUserId = req.user.id;
@@ -590,6 +892,7 @@ app.delete('/api/users/:id/follow', authenticateToken, async (req, res) => {
     }
 });
 
+/** GET /api/users/:id/followers 获取粉丝列表 */
 app.get('/api/users/:id/followers', authenticateToken, async (req, res) => {
     const targetId = Number(req.params.id);
     if (!Number.isInteger(targetId) || targetId <= 0) {
@@ -607,6 +910,7 @@ app.get('/api/users/:id/followers', authenticateToken, async (req, res) => {
     }
 });
 
+/** GET /api/users/:id/following 获取关注列表 */
 app.get('/api/users/:id/following', authenticateToken, async (req, res) => {
     const targetId = Number(req.params.id);
     if (!Number.isInteger(targetId) || targetId <= 0) {
@@ -624,6 +928,7 @@ app.get('/api/users/:id/following', authenticateToken, async (req, res) => {
     }
 });
 
+/** GET /api/users/search?q=keyword 用户搜索（用户名/昵称/学号） */
 app.get('/api/users/search', authenticateToken, async (req, res) => {
     const rawQuery = req.query.q ?? req.query.query ?? '';
     const keyword = sanitizeNullableString(rawQuery, 255);
@@ -691,6 +996,7 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
     }
 });
 
+/** GET /api/users/me/favorites 获取我的收藏列表 */
 app.get('/api/users/me/favorites', authenticateToken, async (req, res) => {
     try {
         const favorites = await fetchFavoriteListings(req.user.id);
@@ -700,6 +1006,7 @@ app.get('/api/users/me/favorites', authenticateToken, async (req, res) => {
     }
 });
 
+/** POST /api/listings/:id/favorite 收藏帖子 */
 app.post('/api/listings/:id/favorite', authenticateToken, async (req, res) => {
     const listingId = Number(req.params.id);
     if (!Number.isInteger(listingId) || listingId <= 0) {
@@ -724,6 +1031,7 @@ app.post('/api/listings/:id/favorite', authenticateToken, async (req, res) => {
     }
 });
 
+/** DELETE /api/listings/:id/favorite 取消收藏 */
 app.delete('/api/listings/:id/favorite', authenticateToken, async (req, res) => {
     const listingId = Number(req.params.id);
     if (!Number.isInteger(listingId) || listingId <= 0) {
@@ -745,6 +1053,10 @@ app.delete('/api/listings/:id/favorite', authenticateToken, async (req, res) => 
 // --- 5.2 帖子/商品路由 (Listings Routes) ---
 
 // 获取帖子列表 (公开接口)
+/**
+ * GET /api/listings
+ * 支持筛选：type, userId, status, searchTerm, category
+ */
 app.get('/api/listings', async (req, res) => {
     try {
         const { type, userId, status, searchTerm, category } = req.query;
@@ -770,6 +1082,10 @@ app.get('/api/listings', async (req, res) => {
 });
 
 // 发布新帖子 (受保护接口)
+/**
+ * POST /api/listings
+ * 创建帖子，支持多图上传与封面自动选取，支持 start_location/end_location
+ */
 app.post('/api/listings', authenticateToken, uploadListingImages, async (req, res) => {
     const { title, description, price, category, type, start_location, end_location } = req.body;
     const { id: userId, username: userName } = req.user;
@@ -818,6 +1134,10 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
 });
 
 // 更新帖子 (新增 PUT 路由)
+/**
+ * PUT /api/listings/:id
+ * 仅作者可更新；支持保留/新增图片与封面重算；支持 start_location/end_location
+ */
 app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req, res) => {
     const listingId = req.params.id;
     const { id: userId } = req.user;
@@ -913,6 +1233,7 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
 });
 
 // 删除帖子 (增强版 DELETE 路由)
+/** DELETE /api/listings/:id 仅作者可删；删除数据库后清理物理文件 */
 app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
     const listingId = req.params.id;
     const { id: userId } = req.user;
@@ -950,6 +1271,7 @@ app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
     }
 });
 
+/** GET /api/listings/:id/detail 公开：帖子详情 + 图集 + 回复 */
 app.get('/api/listings/:id/detail', async (req, res) => {
     const listingId = req.params.id;
     try {
@@ -986,6 +1308,7 @@ app.get('/api/listings/:id/detail', async (req, res) => {
 // --- 5.3 订单路由 (Orders Routes) --- (全部为受保护接口)
 
 // 创建订单 (买家点击“立即购买”)
+/** POST /api/orders 创建订单，校验不可自购与可售状态 */
 app.post('/api/orders', authenticateToken, async (req, res) => {
     const { listingId } = req.body;
     const { id: buyerId } = req.user;
@@ -1022,6 +1345,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
 });
 
 // 获取我的订单列表
+/** GET /api/orders?role=buyer|seller&status=xxx 查询我的订单 */
 app.get('/api/orders', authenticateToken, async (req, res) => {
     const { id: userId } = req.user;
     const { role, status } = req.query; // role: 'buyer' or 'seller'
@@ -1052,6 +1376,10 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
 });
 
 // [核心更新] 更新订单状态 (支付、发货、确认收货、取消)
+/**
+ * PUT /api/orders/:id/status
+ * 状态流转：to_pay -> to_ship -> to_receive -> completed；任一早期节点可取消 -> cancelled
+ */
 app.put('/api/orders/:id/status', authenticateToken, async (req, res) => {
     const orderId = req.params.id;
     const { id: userId } = req.user;
@@ -1110,6 +1438,7 @@ app.put('/api/orders/:id/status', authenticateToken, async (req, res) => {
 });
 
 // --- 5.4 消息路由 (Messaging Routes) ---
+/** GET /api/messages/conversations 最近会话摘要（含未读数） */
 app.get('/api/messages/conversations', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
@@ -1149,6 +1478,7 @@ app.get('/api/messages/conversations', authenticateToken, async (req, res) => {
     }
 });
 
+/** GET /api/messages/conversations/:otherUserId/messages 拉取与某用户的详细消息 */
 app.get('/api/messages/conversations/:otherUserId/messages', authenticateToken, async (req, res) => {
     const { otherUserId } = req.params;
     const userId = req.user.id;
@@ -1184,6 +1514,7 @@ app.get('/api/messages/conversations/:otherUserId/messages', authenticateToken, 
     }
 });
 
+/** POST /api/messages/conversations/:otherUserId/read 将与某用户的未读消息置为已读 */
 app.post('/api/messages/conversations/:otherUserId/read', authenticateToken, async (req, res) => {
     const { otherUserId } = req.params;
     const userId = req.user.id;
@@ -1206,6 +1537,7 @@ app.post('/api/messages/conversations/:otherUserId/read', authenticateToken, asy
 
 
 // --- 5.5 回复路由 (Replies Routes) ---
+/** GET /api/listings/:id/replies 获取某帖子的公共回复列表 */
 app.get('/api/listings/:id/replies', async (req, res) => {
     try {
         const [rows] = await pool.execute('SELECT * FROM replies WHERE listing_id = ? ORDER BY created_at ASC', [req.params.id]);
@@ -1215,6 +1547,7 @@ app.get('/api/listings/:id/replies', async (req, res) => {
     }
 });
 
+/** POST /api/listings/:id/replies 发表公共回复（需登录） */
 app.post('/api/listings/:id/replies', authenticateToken, async (req, res) => {
     const listingId = req.params.id;
     const { content } = req.body;
@@ -1240,19 +1573,23 @@ app.post('/api/listings/:id/replies', authenticateToken, async (req, res) => {
 // =================================================================
 // 6. WebSocket 服务器 (WebSocket Server)
 // =================================================================
+/** WebSocket 在线连接：userId -> Set<WebSocket> */
 const activeClients = new Map(); // userId -> Set<WebSocket>
 
+/** 安全发送 JSON 给某连接 */
 const sendJson = (socket, payload) => {
     if (!socket || socket.readyState !== socket.OPEN) return;
     socket.send(JSON.stringify(payload));
 };
 
+/** 向指定用户的所有连接广播 */
 const broadcastToUser = (userId, payload) => {
     const sockets = activeClients.get(userId);
     if (!sockets) return;
     sockets.forEach(socket => sendJson(socket, payload));
 };
 
+/** 记录用户新连接 */
 const registerSocket = (userId, socket) => {
     if (!activeClients.has(userId)) {
         activeClients.set(userId, new Set());
@@ -1260,6 +1597,7 @@ const registerSocket = (userId, socket) => {
     activeClients.get(userId).add(socket);
 };
 
+/** 清理用户连接 */
 const unregisterSocket = (userId, socket) => {
     if (!activeClients.has(userId)) return;
     const sockets = activeClients.get(userId);
@@ -1269,6 +1607,7 @@ const unregisterSocket = (userId, socket) => {
     }
 };
 
+/** 构建双方会话摘要（最后消息/时间/未读） */
 async function buildConversationSnapshot(currentUserId, otherUserId) {
     const [rows] = await pool.execute(`
         SELECT
@@ -1298,9 +1637,11 @@ async function buildConversationSnapshot(currentUserId, otherUserId) {
     };
 }
 
+/** WebSocket 服务端，路径 /ws */
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 wss.on('connection', (socket, req) => {
+    // 握手阶段：从查询参数 token 中解析并校验 JWT
     try {
         const url = new URL(req.url, `http://${req.headers.host}`);
         const token = url.searchParams.get('token');
@@ -1321,7 +1662,8 @@ wss.on('connection', (socket, req) => {
         registerSocket(user.id, socket);
         sendJson(socket, { type: 'ready' });
 
-        socket.on('message', async (messageBuffer) => {
+    // 处理聊天消息发送
+    socket.on('message', async (messageBuffer) => {
             let payload;
             try {
                 payload = JSON.parse(messageBuffer.toString());
@@ -1404,13 +1746,15 @@ wss.on('connection', (socket, req) => {
             }
         });
 
-        socket.on('close', () => {
+    // 连接关闭：移除在线表映射
+    socket.on('close', () => {
             if (socket.user) {
                 unregisterSocket(socket.user.id, socket);
             }
         });
 
-        socket.on('error', () => {
+    // 连接错误：清理资源
+    socket.on('error', () => {
             if (socket.user) {
                 unregisterSocket(socket.user.id, socket);
             }
@@ -1425,7 +1769,9 @@ wss.on('connection', (socket, req) => {
 // =================================================================
 // 7. 启动服务器 (Start Server)
 // =================================================================
+// 可选：托管前端构建产物（生产部署时常用）
 if (process.env.SERVE_FRONTEND === 'true') {
+    /** 解析 dist 路径，默认 ../frontend/dist，支持通过环境变量覆盖 */
     const resolveDistPath = () => {
         if (!process.env.FRONTEND_DIST_PATH) {
             return path.resolve(__dirname, '../frontend/dist');
@@ -1439,7 +1785,8 @@ if (process.env.SERVE_FRONTEND === 'true') {
 
     if (fs.existsSync(distPath)) {
         console.log(`[Static] Serving frontend assets from ${distPath}`);
-        app.use(express.static(distPath));
+    // 静态托管前端，并将除 /api|/uploads|/ws 外的请求回退到 index.html 以支持前端路由
+    app.use(express.static(distPath));
         app.get('*', (req, res, next) => {
             if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/ws')) {
                 return next();

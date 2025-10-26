@@ -271,7 +271,7 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
         try {
             const payload = {
                 displayName: formState.displayName,
-                studentId: formState.studentId,
+                // studentId 为注册时绑定，不随资料修改提交
                 contactPhone: formState.contactPhone,
                 bio: formState.bio,
             };
@@ -809,16 +809,19 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
                                                 className="px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-200 focus:border-indigo-500"
                                             />
                                         </label>
-                                        <label className="flex flex-col gap-2 text-sm">
+                                        <label className="flex flex-col gap-1 text-sm">
                                             <span className="text-gray-600">学号</span>
                                             <input
                                                 type="text"
                                                 name="studentId"
                                                 value={formState.studentId}
-                                                onChange={handleFormChange}
-                                                placeholder="仅用于校内信任认证"
-                                                className="px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-200 focus:border-indigo-500"
+                                                readOnly
+                                                disabled
+                                                placeholder="注册时绑定，后续不可修改"
+                                                title="学号在注册时绑定，后续不可修改"
+                                                className="px-3 py-2 border rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
                                             />
+                                            <span className="text-xs text-gray-400">学号在注册时绑定（普通注册为空），之后不可修改。</span>
                                         </label>
                                         <label className="flex flex-col gap-2 text-sm">
                                             <span className="text-gray-600">联系方式</span>
