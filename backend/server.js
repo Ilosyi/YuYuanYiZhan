@@ -1059,11 +1059,9 @@ app.delete('/api/listings/:id/favorite', authenticateToken, async (req, res) => 
  */
 app.get('/api/listings', async (req, res) => {
     try {
-        const { type, userId, status, searchTerm, category } = req.query;
+        const { type, userId, status, searchTerm, category, itemType, startLocation, endLocation } = req.query;
         let sql = `
-            SELECT l.*, (
-                SELECT COUNT(*) FROM listing_images li WHERE li.listing_id = l.id
-            ) AS images_count
+            SELECT l.*, (SELECT COUNT(*) FROM listing_images li WHERE li.listing_id = l.id) AS images_count
             FROM listings l
             WHERE 1=1
         `;
@@ -1072,7 +1070,51 @@ app.get('/api/listings', async (req, res) => {
         if (userId) { sql += ' AND l.user_id = ?'; params.push(userId); }
         if (status && status !== 'all') { sql += ' AND l.status = ?'; params.push(status); }
         if (searchTerm) { sql += ' AND (l.title LIKE ? OR l.description LIKE ?)'; params.push(`%${searchTerm}%`, `%${searchTerm}%`); }
-        if (category && category !== 'all') { sql += ' AND l.category = ?'; params.push(category); }
+        
+        // 处理分类筛选
+        if (category && category !== 'all') {
+            if (type === 'lostfound' && (category === 'lost' || category === 'found')) {
+                sql += ' AND l.category LIKE ?';
+                params.push(`${category}_%`);
+            } else {
+                sql += ' AND l.category = ?';
+                params.push(category);
+            }
+        }
+        
+        // 处理物品类型筛选（仅对失物招领模式）
+        if (type === 'lostfound' && itemType && itemType !== 'all') {
+            sql += ' AND l.category LIKE ?';
+            params.push(`_%${itemType}`);
+        }
+        
+        // 添加地点筛选（仅对跑腿服务）
+        if ((type === 'sale' || type === 'acquire') && category === 'service') {
+            // 处理起始地点筛选
+            if (startLocation && startLocation !== 'all') {
+                if (startLocation === 'other') {
+                    // 对于"其他地点"，检查start_location是否不是预设地点
+                    sql += ` AND l.start_location IS NOT NULL AND l.start_location NOT IN ('qinyuan', 'yunyuan', 'zisong')`;
+                } else {
+                    // 对于预设地点，精确匹配
+                    sql += ' AND l.start_location = ?';
+                    params.push(startLocation);
+                }
+            }
+            
+            // 处理目的地点筛选
+            if (endLocation && endLocation !== 'all') {
+                if (endLocation === 'other') {
+                    // 对于"其他地点"，检查end_location是否不是预设地点
+                    sql += ` AND l.end_location IS NOT NULL AND l.end_location NOT IN ('qinyuan', 'yunyuan', 'zisong')`;
+                } else {
+                    // 对于预设地点，精确匹配
+                    sql += ' AND l.end_location = ?';
+                    params.push(endLocation);
+                }
+            }
+        }
+        
         sql += ' ORDER BY l.created_at DESC';
         const [rows] = await pool.execute(sql, params);
         res.json(rows);

@@ -40,8 +40,8 @@ const CATEGORY_OPTIONS = {
             { value: 'found', label: '失物招领' },
         ],
         items: [
-            { value: 'campuscard', label: '校园卡' },  // 去掉下划线
-            { value: 'studentid', label: '学生证' },    // 去掉下划线
+            { value: 'campusIdCard', label: '校园卡' },  // 去掉下划线
+            { value: 'studentIdCard', label: '学生证' },    // 去掉下划线
             { value: 'textbook', label: '教材' },
             { value: 'bag', label: '书包' },
             { value: 'other', label: '其他' },
@@ -60,6 +60,7 @@ const getDefaultCategory = (type) => {
 
 const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     // 修改 getInitialState 函数，使用下划线命名法与后端保持一致
+    // 修改getInitialState函数，统一使用驼峰命名
     const getInitialState = useCallback(() => {
         const initialType = editingItem?.type || 'sale';
         const initialCategory = editingItem?.category || getDefaultCategory(initialType);
@@ -73,6 +74,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             lostFoundItem = item || 'other';
         }
         
+        // 4. 修改 getInitialState 函数，移除不必要的自定义地点字段
         return {
             type: initialType,
             title: editingItem?.title || '',
@@ -81,11 +83,10 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             category: initialCategory,
             lostFoundType,
             lostFoundItem,
-            // 修改为下划线命名法与后端保持一致
-            start_location: editingItem?.start_location || '',
-            end_location: editingItem?.end_location || '',
-            customStartLocation: editingItem?.customStartLocation || '',
-            customEndLocation: editingItem?.customEndLocation || ''
+            // 只保留必要的地点字段
+            startLocation: editingItem?.start_location || '',
+            endLocation: editingItem?.end_location || ''
+            // 移除自定义地点字段
         };
     }, [editingItem]);
 
@@ -129,6 +130,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
 
         if (editingItem?.id) {
             setIsDetailLoading(true);
+            // 在获取帖子详情后添加地点信息的映射
             api.get(`/api/listings/${editingItem.id}/detail`)
                 .then(({ data }) => {
                     if (cancelled) return;
@@ -137,20 +139,18 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         setExistingImages([]);
                         return;
                     }
-                    if (Array.isArray(listing.images) && listing.images.length > 0) {
-                        setExistingImages(
-                            listing.images
-                                .filter((image) => image.image_url)
-                                .map((image) => ({
-                                    id: image.id ?? null,
-                                    rawUrl: image.image_url,
-                                }))
-                        );
-                    } else if (listing.image_url) {
-                        setExistingImages([{ id: null, rawUrl: listing.image_url }]);
-                    } else {
-                        setExistingImages([]);
-                    }
+                    // 加载图片信息...
+                    
+                    // 添加地点信息的映射 - 下划线命名法转驼峰命名法
+                    setFormData(prev => ({
+                        ...prev,
+                        // 将数据库中的下划线命名字段映射到表单的驼峰命名状态
+                        startLocation: listing.start_location || '',
+                        endLocation: listing.end_location || '',
+                        // 如果地点是自定义地点，需要设置相应的字段
+                        customStartLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.start_location) ? '' : listing.start_location || '',
+                        customEndLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.end_location) ? '' : listing.end_location || ''
+                    }));
                 })
                 .catch((err) => {
                     console.error('加载帖子详情失败:', err);
@@ -177,54 +177,71 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     }, [resetNewImages]);
 
     // 修改表单字段更新函数，确保使用正确的字段名
+    // 修改handleInputChange函数中类型变化时的重置逻辑
     const handleInputChange = (e) => {
-        const { name, value } = e.target;
-        
-        // 特殊处理类型变化时重置相关字段
-        if (name === 'type') {
+    const { name, value } = e.target;
+    
+    // 特殊处理类型变化时重置相关字段
+    if (name === 'type') {
+    setFormData(prev => ({
+    ...prev,
+    [name]: value,
+    category: getDefaultCategory(value),
+    lostFoundType: '',
+    lostFoundItem: '',
+    // 简化地点字段重置
+    startLocation: '',
+    endLocation: ''
+    // 移除自定义地点字段
+    }));
+    return;
+    }
+    
+    // 其他代码保持不变
+    if ((name === 'lostFoundType' || name === 'lostFoundItem') && formData.type === 'lostfound') {
+        // 当失物招领类型或物品变化时，更新category字段为"类型_物品"格式
+        const type = name === 'lostFoundType' ? value : formData.lostFoundType || 'lost';
+        const item = name === 'lostFoundItem' ? value : formData.lostFoundItem || 'other';
+        setFormData(prev => ({
+            ...prev,
+            [name]: value,
+            category: `${type}_${item}`
+        }));
+        return;
+    }
+    
+    // 特殊处理分类变化时重置相关字段
+    if (name === 'category') {
+        // 失物招领的分类有特殊格式
+        if (formData.type === 'lostfound') {
+            const [type, item] = value.split('_');
             setFormData(prev => ({
                 ...prev,
-                [name]: value,
-                category: getDefaultCategory(value),
-                lostFoundType: '',
-                lostFoundItem: '',
-                // 类型变化时重置地点信息
-                start_location: '',
-                end_location: '',
-                customStartLocation: '',
-                customEndLocation: ''
+                category: value,
+                // 使用正确的驼峰命名
+                ...(!['service'].includes(value) && {
+                    startLocation: '',
+                    endLocation: '',
+                    // 移除自定义地点字段相关逻辑
+                })
             }));
-            return;
+        } else {
+            setFormData(prev => ({
+                ...prev,
+                category: value,
+                // 非跑腿服务分类时重置地点信息
+                ...(!['跑腿服务', 'errand'].includes(value) && {
+                    start_location: '',
+                    end_location: '',
+                    customStartLocation: '',
+                    customEndLocation: ''
+                })
+            }));
         }
-        
-        // 特殊处理分类变化时重置相关字段
-        if (name === 'category') {
-            // 失物招领的分类有特殊格式
-            if (formData.type === 'lostfound') {
-                const [type, item] = value.split('_');
-                setFormData(prev => ({
-                    ...prev,
-                    category: value,
-                    lostFoundType: type || 'lost',
-                    lostFoundItem: item || 'other'
-                }));
-            } else {
-                setFormData(prev => ({
-                    ...prev,
-                    category: value,
-                    // 非跑腿服务分类时重置地点信息
-                    ...(!['跑腿服务', 'errand'].includes(value) && {
-                        start_location: '',
-                        end_location: '',
-                        customStartLocation: '',
-                        customEndLocation: ''
-                    })
-                }));
-            }
-            return;
-        }
-        
-        setFormData(prev => ({ ...prev, [name]: value }));
+        return;
+    }
+    
+    setFormData(prev => ({ ...prev, [name]: value }));
     };
 
     const handleImageChange = useCallback((event) => {
@@ -296,11 +313,12 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         });
         
         // 添加地点字段的映射 - 驼峰命名法转下划线命名法
+        // 1. 修改表单提交逻辑，直接使用地点字段，不再区分'other'选项
         if (formData.startLocation) {
-            submissionData.append('start_location', formData.startLocation === 'other' ? formData.customStartLocation : formData.startLocation);
+            submissionData.append('start_location', formData.startLocation);
         }
         if (formData.endLocation) {
-            submissionData.append('end_location', formData.endLocation === 'other' ? formData.customEndLocation : formData.endLocation);
+            submissionData.append('end_location', formData.endLocation);
         }
     
         if (!(formData.type === 'sale' || formData.type === 'acquire')) {

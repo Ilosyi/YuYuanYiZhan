@@ -51,6 +51,16 @@ const LOSTFOUND_ITEM_CONFIG = {
     other: '其他',
 };
 
+// 在文件顶部添加物品类型配置
+const LOSTFOUND_ITEM_TYPE_CONFIG = {
+    all: '所有物品',
+    studentid: '学生证',
+    campuscard: '校园卡',
+    bag: '书包',
+    textbook: '教材',
+    other: '其他'
+};
+
 const MODE_TEXT = {
     sale: '出售',
     acquire: '收购',
@@ -221,9 +231,14 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const [favoriteIds, setFavoriteIds] = useState(() => new Set());
     const pendingDetailRef = useRef(null);
 
+    // 在状态定义部分添加物品类型筛选状态
+    const [itemType, setItemType] = useState('all');
+    
+    // 在模式切换的useEffect中重置物品类型筛选
     useEffect(() => {
-        setCategory('all');
-        setSearchTerm('');
+    setCategory('all');
+    setItemType('all'); // 重置物品类型筛选
+    setSearchTerm('');
     }, [activeMode]);
 
     const refreshFavoriteIds = useCallback(async () => {
@@ -263,26 +278,81 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     }, []);
 
+    // 在LOSTFOUND_ITEM_TYPE_CONFIG之后添加地点配置
+    const LOCATION_CONFIG = {
+    all: '所有地点',
+    qinyuan: '沁苑',
+    yunyuan: '韵苑',
+    zisong: '紫菘',
+    other: '其他地点'
+    };
+    
+    // 在状态定义部分添加起始地点和目的地点筛选状态
+    const [startLocation, setStartLocation] = useState('all');
+    const [endLocation, setEndLocation] = useState('all');
+    
+    // 在模式切换的useEffect中重置地点筛选状态
+    useEffect(() => {
+    setCategory('all');
+    setItemType('all'); // 重置物品类型筛选
+    setStartLocation('all'); // 重置起始地点筛选
+    setEndLocation('all'); // 重置目的地点筛选
+    setSearchTerm('');
+    }, [activeMode]);
+    
+    // 修改fetchListings函数，添加地点筛选参数
+    // 确保fetchListings函数中的参数名称正确
     const fetchListings = useCallback(async () => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            const response = await api.get('/api/listings', {
-                params: {
-                    type: activeMode,
-                    status: 'available',
-                    searchTerm: searchTerm || undefined,
-                    category: category !== 'all' ? category : undefined,
-                },
-            });
-            setListings(response.data);
-        } catch (err) {
-            console.error(err);
-            setError('数据加载失败，请稍后重试。');
-        } finally {
-            setIsLoading(false);
-        }
-    }, [activeMode, searchTerm, category]);
+    setIsLoading(true);
+    setError(null);
+    try {
+        const response = await api.get('/api/listings', {
+            params: {
+                type: activeMode,
+                status: 'available',
+                searchTerm: searchTerm || undefined,
+                category: category !== 'all' ? category : undefined,
+                itemType: activeMode === 'lostfound' && itemType !== 'all' ? itemType : undefined,
+                // 确保参数名称与后端一致
+                startLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && startLocation !== 'all' ? startLocation : undefined,
+                endLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && endLocation !== 'all' ? endLocation : undefined
+            },
+        });
+        setListings(response.data);
+    } catch (err) {
+        console.error(err);
+        setError('数据加载失败，请稍后重试。');
+    } finally {
+        setIsLoading(false);
+    }
+    }, [activeMode, searchTerm, category, itemType, startLocation, endLocation]);
+    
+    // 在UI中添加地点筛选器（在物品类型筛选器之后）
+    {/* 仅在出售/收购模式且分类为跑腿服务时显示地点筛选器 */}
+    {(activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && (
+        <>
+            <select
+                value={startLocation}
+                onChange={(e) => setStartLocation(e.target.value)}
+                className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white min-w-[140px]`}
+            >
+                <option value="all">起始地点</option>
+                {Object.entries(LOCATION_CONFIG).filter(([key]) => key !== 'all').map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                ))}
+            </select>
+            <select
+                value={endLocation}
+                onChange={(e) => setEndLocation(e.target.value)}
+                className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white min-w-[140px]`}
+            >
+                <option value="all">目的地点</option>
+                {Object.entries(LOCATION_CONFIG).filter(([key]) => key !== 'all').map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                ))}
+            </select>
+        </>
+    )}
 
     useEffect(() => {
         const timer = setTimeout(fetchListings, 250);
@@ -587,6 +657,45 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                 <option key={key} value={key}>{label}</option>
                             ))}
                         </select>
+                        
+                        {/* 仅在失物招领模式下显示物品类型筛选器 */}
+                        {activeMode === 'lostfound' && (
+                            <select
+                                value={itemType}
+                                onChange={(e) => setItemType(e.target.value)}
+                                className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white min-w-[140px]`}
+                            >
+                                {Object.entries(LOSTFOUND_ITEM_TYPE_CONFIG).map(([key, label]) => (
+                                    <option key={key} value={key}>{label}</option>
+                                ))}
+                            </select>
+                        )}
+                        
+                        {/* 仅在出售/收购模式且分类为跑腿服务时显示地点筛选器 */}
+                        {(activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && (
+                            <>
+                                <select
+                                    value={startLocation}
+                                    onChange={(e) => setStartLocation(e.target.value)}
+                                    className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white min-w-[140px]`}
+                                >
+                                    <option value="all">起始地点</option>
+                                    {Object.entries(LOCATION_CONFIG).filter(([key]) => key !== 'all').map(([key, label]) => (
+                                        <option key={key} value={key}>{label}</option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={endLocation}
+                                    onChange={(e) => setEndLocation(e.target.value)}
+                                    className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white min-w-[140px]`}
+                                >
+                                    <option value="all">目的地点</option>
+                                    {Object.entries(LOCATION_CONFIG).filter(([key]) => key !== 'all').map(([key, label]) => (
+                                        <option key={key} value={key}>{label}</option>
+                                    ))}
+                                </select>
+                            </>
+                        )}
                     </div>
                 </div>
             </div>
@@ -623,8 +732,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                             </div>
                                         )}
                                         
-                                        {/* 添加出发地点和目的地点显示 */}
-                                        {(detailListing.category === '跑腿服务' || detailListing.category === 'errand') && (
+                                        {/* 修复地点信息显示的条件判断 */}
+                                        {detailListing.category === 'service' && (
                                             <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
                                                 {detailListing.start_location && (
                                                     <div className="flex items-start mb-2">
