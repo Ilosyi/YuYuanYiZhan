@@ -108,17 +108,10 @@ const InfoCard = ({
     
     // 修改InfoCard组件中的失物招领分类解析逻辑
     if (isLostFound) {
-    // 修复：确保正确解析所有物品分类
+    // 修复：确保正确解析所有物品分类（移除调试日志）
     if (item.category && item.category.includes('_')) {
         const [type, itemType] = item.category.split('_');
-        // 调试日志帮助排查问题
-        console.log('Item category:', item.category);
-        console.log('Split parts:', type, itemType);
-        
-        // 修复：确保正确获取物品标签，增加额外的容错处理
         const itemLabel = LOSTFOUND_ITEM_CONFIG[itemType] || '其他';
-        console.log('Item label found:', itemLabel);
-        
         badgeText = `${type === 'found' ? '招领' : '寻物'}: ${itemLabel}`;
     } else {
         // 兼容旧数据格式
@@ -284,6 +277,15 @@ const HomePage = ({ onNavigate = () => {} }) => {
     qinyuan: '沁苑',
     yunyuan: '韵苑',
     zisong: '紫菘',
+    '西区宿舍': '西区宿舍',
+    '博士公寓': '博士公寓',
+    '南大门': '南大门',
+    '南二门': '南二门',
+    '南三门': '南三门',
+    '南四门': '南四门',
+    '生活门': '生活门',
+    '东大门': '东大门',
+    '紫菘门': '紫菘门',
     other: '其他地点'
     };
     

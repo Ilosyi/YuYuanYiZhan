@@ -7,6 +7,16 @@ const LOCATION_OPTIONS = [
     { value: 'qinyuan', label: '沁苑' },
     { value: 'yunyuan', label: '韵苑' },
     { value: 'zisong', label: '紫菘' },
+    // 新增固定地点（直接以中文作为值，便于展示与后端筛选）
+    { value: '西区宿舍', label: '西区宿舍' },
+    { value: '博士公寓', label: '博士公寓' },
+    { value: '南大门', label: '南大门' },
+    { value: '南二门', label: '南二门' },
+    { value: '南三门', label: '南三门' },
+    { value: '南四门', label: '南四门' },
+    { value: '生活门', label: '生活门' },
+    { value: '东大门', label: '东大门' },
+    { value: '紫菘门', label: '紫菘门' },
     { value: 'other', label: '其他 (请自填)' }
 ];
 
@@ -221,8 +231,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                 // 使用正确的驼峰命名
                 ...(!['service'].includes(value) && {
                     startLocation: '',
-                    endLocation: '',
-                    // 移除自定义地点字段相关逻辑
+                    endLocation: ''
                 })
             }));
         } else {
@@ -230,9 +239,9 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                 ...prev,
                 category: value,
                 // 非跑腿服务分类时重置地点信息
-                ...(!['跑腿服务', 'errand'].includes(value) && {
-                    start_location: '',
-                    end_location: '',
+                ...(!['service'].includes(value) && {
+                    startLocation: '',
+                    endLocation: '',
                     customStartLocation: '',
                     customEndLocation: ''
                 })
@@ -298,9 +307,12 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         // 使用 FormData 来发送包含文件的表单
         const submissionData = new FormData();
         
-        // 处理普通字段
+        // 处理普通字段（跳过错误的蛇形命名地点键，防止重复字段导致数组值）
         Object.entries(formData).forEach(([key, value]) => {
             if (value === null || value === undefined || key === 'image') {
+                return;
+            }
+            if (key === 'start_location' || key === 'end_location') {
                 return;
             }
         
@@ -313,12 +325,20 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         });
         
         // 添加地点字段的映射 - 驼峰命名法转下划线命名法
-        // 1. 修改表单提交逻辑，直接使用地点字段，不再区分'other'选项
-        if (formData.startLocation) {
-            submissionData.append('start_location', formData.startLocation);
+        // 将“其他”替换为自定义输入值
+        let startLoc = formData.startLocation;
+        if (startLoc === 'other') {
+            startLoc = (formData.customStartLocation || '').trim();
         }
-        if (formData.endLocation) {
-            submissionData.append('end_location', formData.endLocation);
+        if (startLoc) {
+            submissionData.append('start_location', startLoc);
+        }
+        let endLoc = formData.endLocation;
+        if (endLoc === 'other') {
+            endLoc = (formData.customEndLocation || '').trim();
+        }
+        if (endLoc) {
+            submissionData.append('end_location', endLoc);
         }
     
         if (!(formData.type === 'sale' || formData.type === 'acquire')) {

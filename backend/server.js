@@ -323,6 +323,68 @@ const sanitizeNullableString = (value, maxLength) => {
 };
 
 /**
+ * 规范化前端传入的地点字段（multipart 可能出现重复字段 -> 数组）
+ * - 若为数组，取最后一个非空白字符串
+ * - 若为字符串，去空白后返回；为空返回 null
+ */
+const normalizeFormLocation = (input) => {
+    if (Array.isArray(input)) {
+        const last = input
+            .map((v) => String(v ?? '').trim())
+            .filter((v) => v.length > 0)
+            .pop();
+        return last || null;
+    }
+    const s = String(input ?? '').trim();
+    return s || null;
+};
+
+/**
+ * 规范化数据库中可能残留为 JSON 数组字符串的地点值（历史数据纠偏）
+ */
+const normalizeDbLocation = (value) => {
+    if (value == null) return value;
+    const s = String(value);
+    if (s.startsWith('[')) {
+        try {
+            const arr = JSON.parse(s);
+            if (Array.isArray(arr)) {
+                const last = arr
+                    .map((v) => String(v ?? '').trim())
+                    .filter((v) => v.length > 0)
+                    .pop();
+                return last || null;
+            }
+        } catch {}
+    }
+    return s;
+};
+
+/**
+ * 将地点存储值转换为展示值：
+ * - 代码 -> 中文：qinyuan/沁苑, yunyuan/韵苑, zisong/紫菘
+ * - 'other'（历史数据）-> '其他地点'
+ * - 其它值（自定义/文本）-> 原样返回
+ */
+const presentLocation = (value) => {
+    if (value == null) return value;
+    const code = String(normalizeDbLocation(value) || '').trim();
+    const map = { qinyuan: '沁苑', yunyuan: '韵苑', zisong: '紫菘' };
+    if (map[code]) return map[code];
+    if (code.toLowerCase() === 'other') return '其他地点';
+    return code;
+};
+
+// 预设地点列表（用于“其他地点”筛选时的排除）
+// 注意：改为全中文，避免依赖 presentLocation 的显示转换
+const PRESET_LOCATIONS = [
+    // 校区/园区（中文）
+    '沁苑', '韵苑', '紫菘',
+    // 其它中文地点
+    '西区宿舍', '博士公寓', '南大门', '南二门', '南三门', '南四门', '生活门', '东大门', '紫菘门'
+];
+
+/**
  * 获取用户资料快照（基本信息 + 扩展资料 + 计数 + 与当前用户关系）
  */
 const getUserProfileSnapshot = async (targetUserId, currentUserId = null) => {
@@ -1093,31 +1155,53 @@ app.get('/api/listings', async (req, res) => {
             // 处理起始地点筛选
             if (startLocation && startLocation !== 'all') {
                 if (startLocation === 'other') {
-                    // 对于"其他地点"，检查start_location是否不是预设地点
-                    sql += ` AND l.start_location IS NOT NULL AND l.start_location NOT IN ('qinyuan', 'yunyuan', 'zisong')`;
+                    // 对于"其他地点"：排除所有预设地点（包含旧编码与新增中文），同时兼容历史 JSON 数组存储
+                    sql += ' AND l.start_location IS NOT NULL';
+                    if (PRESET_LOCATIONS.length) {
+                        sql += ` AND l.start_location NOT IN (${PRESET_LOCATIONS.map(() => '?').join(', ')})`;
+                        params.push(...PRESET_LOCATIONS);
+                        PRESET_LOCATIONS.forEach((p) => {
+                            sql += ' AND (l.start_location NOT LIKE ?)';
+                            params.push(`%"${p}"%`);
+                        });
+                    }
                 } else {
-                    // 对于预设地点，精确匹配
-                    sql += ' AND l.start_location = ?';
-                    params.push(startLocation);
+                    // 对于预设地点，精确匹配；兼容历史数据为 JSON 数组字符串的情况
+                    sql += ' AND (l.start_location = ? OR (l.start_location IS NOT NULL AND l.start_location LIKE ?))';
+                    params.push(startLocation, `%"${startLocation}"%`);
                 }
             }
             
             // 处理目的地点筛选
             if (endLocation && endLocation !== 'all') {
                 if (endLocation === 'other') {
-                    // 对于"其他地点"，检查end_location是否不是预设地点
-                    sql += ` AND l.end_location IS NOT NULL AND l.end_location NOT IN ('qinyuan', 'yunyuan', 'zisong')`;
+                    // 对于"其他地点"：排除所有预设地点（包含旧编码与新增中文），同时兼容历史 JSON 数组存储
+                    sql += ' AND l.end_location IS NOT NULL';
+                    if (PRESET_LOCATIONS.length) {
+                        sql += ` AND l.end_location NOT IN (${PRESET_LOCATIONS.map(() => '?').join(', ')})`;
+                        params.push(...PRESET_LOCATIONS);
+                        PRESET_LOCATIONS.forEach((p) => {
+                            sql += ' AND (l.end_location NOT LIKE ?)';
+                            params.push(`%"${p}"%`);
+                        });
+                    }
                 } else {
-                    // 对于预设地点，精确匹配
-                    sql += ' AND l.end_location = ?';
-                    params.push(endLocation);
+                    // 对于预设地点，精确匹配；兼容历史数据为 JSON 数组字符串的情况
+                    sql += ' AND (l.end_location = ? OR (l.end_location IS NOT NULL AND l.end_location LIKE ?))';
+                    params.push(endLocation, `%"${endLocation}"%`);
                 }
             }
         }
         
         sql += ' ORDER BY l.created_at DESC';
         const [rows] = await pool.execute(sql, params);
-        res.json(rows);
+        // 展示友好化：地点中文/自定义文本
+        const presented = rows.map((r) => ({
+            ...r,
+            start_location: presentLocation(r.start_location),
+            end_location: presentLocation(r.end_location),
+        }));
+        res.json(presented);
     } catch (err) {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
@@ -1147,9 +1231,11 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
             INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url, start_location, end_location)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
+        const startLoc = normalizeFormLocation(start_location);
+        const endLoc = normalizeFormLocation(end_location);
         const [result] = await connection.execute(sql, [
             title, description, price || 0, category, userId, userName, type, coverImageUrl,
-            start_location || null, end_location || null
+            startLoc, endLoc
         ]);
 
         if (uploadedImages.length) {
@@ -1255,9 +1341,11 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
             start_location = ?, end_location = ?
             WHERE id = ? AND user_id = ?
         `;
+        const startLoc = normalizeFormLocation(start_location);
+        const endLoc = normalizeFormLocation(end_location);
         await connection.execute(sql, [
             title, description, price, category, coverImageUrl, 
-            start_location || null, end_location || null,
+            startLoc, endLoc,
             listingId, userId
         ]);
 
@@ -1328,7 +1416,10 @@ app.get('/api/listings/:id/detail', async (req, res) => {
             return res.status(404).json({ message: 'Listing not found.' });
         }
 
-        const listing = listings[0];
+    const listing = listings[0];
+    // 纠偏 + 展示友好化
+    listing.start_location = presentLocation(listing.start_location);
+    listing.end_location = presentLocation(listing.end_location);
         const [images] = await pool.execute(
             'SELECT id, image_url, sort_order FROM listing_images WHERE listing_id = ? ORDER BY sort_order, id',
             [listingId]
