@@ -117,6 +117,8 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             category: initialCategory,
             lostFoundType,
             lostFoundItem,
+            // 失物招领：可选的丢失者学号
+            lostStudentId: editingItem?.lost_student_id || '',
             // 只保留必要的地点字段
             startLocation: editingItem?.start_location || '',
             endLocation: editingItem?.end_location || '',
@@ -190,6 +192,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         // 将数据库中的下划线命名字段映射到表单的驼峰命名状态
                         startLocation: listing.start_location || '',
                         endLocation: listing.end_location || '',
+                        lostStudentId: listing.lost_student_id || '',
                         // 图书教材细分字段
                         bookType: listing.book_type || '',
                         bookMajor: listing.book_major || '',
@@ -239,6 +242,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     category: getDefaultCategory(value),
     lostFoundType: '',
     lostFoundItem: '',
+    lostStudentId: '',
     // 简化地点字段重置
     startLocation: '',
     endLocation: '',
@@ -388,6 +392,11 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             submissionData.append('end_location', endLoc);
         }
 
+        // 失物招领：可选丢失者学号
+        if (formData.type === 'lostfound' && formData.lostStudentId && String(formData.lostStudentId).trim()) {
+            submissionData.append('lost_student_id', String(formData.lostStudentId).trim());
+        }
+
         // 代课讲座字段（仅当分类为 lecture 时）
         if (formData.category === 'lecture') {
             let lecLoc = formData.lectureLocation;
@@ -500,6 +509,19 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                                         <option key={option.value} value={option.value}>{option.label}</option>
                                     ))}
                                 </select>
+                                {/* 失物招领：可选丢失者学号 */}
+                                <div className="w-full mt-3">
+                                    <label className="block text-sm font-medium text-gray-700">丢失者学号（可选）</label>
+                                    <input
+                                        type="text"
+                                        name="lostStudentId"
+                                        value={formData.lostStudentId}
+                                        onChange={handleInputChange}
+                                        placeholder="例如 u202312345"
+                                        className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                    />
+                                    <p className="mt-1 text-xs text-gray-500">若物品上包含学号，填写后可自动通知可能的失主。</p>
+                                </div>
                             </>
                         ) : (
                             <>

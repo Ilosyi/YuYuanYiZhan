@@ -270,6 +270,14 @@ async function initializeDatabase() {
                 console.warn('为 listings 表添加 book_major 失败：', e.message);
             }
         }
+        // 失物招领：记录可选的丢失者学号
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN lost_student_id VARCHAR(16) NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 lost_student_id 失败：', e.message);
+            }
+        }
         // 为代课讲座分类添加字段：lecture_location、lecture_start_at、lecture_end_at
         try {
             await pool.execute('ALTER TABLE listings ADD COLUMN lecture_location VARCHAR(100) NULL');
@@ -1325,19 +1333,30 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
             INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url,
                                   book_type, book_major,
                                   lecture_location, lecture_start_at, lecture_end_at,
-                                  start_location, end_location)
+                                  start_location, end_location,
+                                  lost_student_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?,
                     ?, ?, ?,
-                    ?, ?)
+                    ?, ?,
+                    ?)
         `;
         const startLoc = normalizeFormLocation(start_location);
         const endLoc = normalizeFormLocation(end_location);
+        // 丢失者学号（仅 lostfound 模块允许）
+        let lostStudentId = sanitizeNullableString(req.body?.lostStudentId ?? req.body?.lost_student_id, 16);
+        if (type !== 'lostfound') {
+            lostStudentId = null;
+        } else if (lostStudentId && !isValidStudentId(lostStudentId)) {
+            await connection.rollback();
+            return res.status(400).json({ message: '丢失者学号格式不合法。' });
+        }
         const [result] = await connection.execute(sql, [
             title, description, price || 0, category, userId, userName, type, coverImageUrl,
             bookType, bookMajor,
             lectureLocation, lectureStartAt, lectureEndAt,
-            startLoc, endLoc
+            startLoc, endLoc,
+            lostStudentId
         ]);
 
         if (uploadedImages.length) {
@@ -1353,6 +1372,31 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
         }
 
         await connection.commit();
+
+        // 提交后尝试通知可能的失主（弱依赖，失败不影响发帖）
+        (async () => {
+            try {
+                if (lostStudentId) {
+                    const [[owner]] = await pool.execute(
+                        `SELECT u.id AS user_id FROM user_profiles up JOIN users u ON up.user_id = u.id
+                         WHERE up.student_id = ? LIMIT 1`,
+                        [lostStudentId]
+                    );
+                    const receiverId = owner?.user_id;
+                    if (receiverId && receiverId !== userId) {
+                        const content = `系统提示：可能与您相关的失物/招领信息《${title}》，请前往查看。`;
+                        await pool.execute(
+                            `INSERT INTO messages (listing_id, sender_id, receiver_id, content) VALUES (?, ?, ?, ?)`,
+                            [result.insertId, userId, receiverId, content]
+                        );
+                        // TODO: 可在此补充 WebSocket 推送（若当前有在线连接）
+                    }
+                }
+            } catch (e) {
+                console.warn('发送失主通知失败：', e.message);
+            }
+        })();
+
         res.status(201).json({ message: 'Listing created successfully!', listingId: result.insertId });
     } catch (err) {
         if (connection) await connection.rollback();
