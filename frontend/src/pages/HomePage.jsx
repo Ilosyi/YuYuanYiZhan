@@ -49,23 +49,24 @@ const CATEGORY_CONFIG = {
     },
 };
 
-// 添加物品分类配置
-// 修改LOSTFOUND_ITEM_CONFIG的键名，与PostModal.jsx保持一致
+// 失物招领物品分类配置（同时兼容旧数据的键名）
 const LOSTFOUND_ITEM_CONFIG = {
-    campuscard: '校园卡',      // 去掉下划线
-    studentid: '学生证',       // 去掉下划线
+    campusIdCard: '校园卡',
+    campuscard: '校园卡',
+    studentIdCard: '学生证',
+    studentid: '学生证',
     textbook: '教材',
     bag: '书包',
     other: '其他',
 };
 
-// 在文件顶部添加物品类型配置
+// 失物招领筛选项（使用与表单一致的值）
 const LOSTFOUND_ITEM_TYPE_CONFIG = {
     all: '所有物品',
-    studentid: '学生证',
-    campuscard: '校园卡',
-    bag: '书包',
+    campusIdCard: '校园卡',
+    studentIdCard: '学生证',
     textbook: '教材',
+    bag: '书包',
     other: '其他'
 };
 

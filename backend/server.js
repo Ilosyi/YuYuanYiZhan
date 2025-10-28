@@ -1429,7 +1429,7 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
 app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req, res) => {
     const listingId = req.params.id;
     const { id: userId } = req.user;
-    const { title, description, price, category, existingImageUrl, start_location, end_location } = req.body;
+    const { title, description, category, existingImageUrl, start_location, end_location } = req.body;
     let keepImageIds = parseKeepImageIds(req.body.keepImageIds);
     const uploadedImages = gatherUploadedImages(req);
     const newImageUrls = uploadedImages.map((file) => buildImageUrl(file));
@@ -1496,6 +1496,18 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
             ? updatedImages[0].image_url
             : existingImageUrl || null;
 
+        const allowedTypes = new Set(['sale', 'acquire', 'help', 'lostfound']);
+        const rawType = sanitizeNullableString(req.body?.type, 32);
+        const nextType = allowedTypes.has(rawType) ? rawType : listings[0].type;
+
+        // 价格：仅出售/收购保留，其他类型默认 0
+        let normalizedPrice = 0;
+        if (nextType === 'sale' || nextType === 'acquire') {
+            const rawPrice = Array.isArray(req.body?.price) ? req.body.price[0] : req.body?.price;
+            const numericPrice = Number(rawPrice);
+            normalizedPrice = Number.isFinite(numericPrice) ? numericPrice : Number(listings[0].price || 0);
+        }
+
         const rawBookType = sanitizeNullableString(req.body?.bookType ?? req.body?.book_type, 50);
         const rawBookMajor = sanitizeNullableString(req.body?.bookMajor ?? req.body?.book_major, 100);
         const bookType = category === 'books' ? rawBookType : null;
@@ -1511,20 +1523,30 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
         const lectureStartAt = category === 'lecture' ? parseDateValue(req.body?.lectureStartAt ?? req.body?.lecture_start_at) : null;
         const lectureEndAt = category === 'lecture' ? parseDateValue(req.body?.lectureEndAt ?? req.body?.lecture_end_at) : null;
 
+        let lostStudentId = sanitizeNullableString(req.body?.lostStudentId ?? req.body?.lost_student_id, 16);
+        if (nextType !== 'lostfound') {
+            lostStudentId = null;
+        } else if (lostStudentId && !isValidStudentId(lostStudentId)) {
+            await connection.rollback();
+            return res.status(400).json({ message: '丢失者学号格式不合法。' });
+        }
+
         const sql = `
-            UPDATE listings SET title = ?, description = ?, price = ?, category = ?, image_url = ?,
+            UPDATE listings SET title = ?, description = ?, price = ?, category = ?, type = ?, image_url = ?,
             book_type = ?, book_major = ?,
             lecture_location = ?, lecture_start_at = ?, lecture_end_at = ?,
-            start_location = ?, end_location = ?
+            start_location = ?, end_location = ?,
+            lost_student_id = ?
             WHERE id = ? AND user_id = ?
         `;
         const startLoc = normalizeFormLocation(start_location);
         const endLoc = normalizeFormLocation(end_location);
         await connection.execute(sql, [
-            title, description, price, category, coverImageUrl,
+            title, description, normalizedPrice, category, nextType, coverImageUrl,
             bookType, bookMajor,
             lectureLocation, lectureStartAt, lectureEndAt,
             startLoc, endLoc,
+            lostStudentId,
             listingId, userId
         ]);
 
