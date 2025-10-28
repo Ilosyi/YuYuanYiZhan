@@ -982,11 +982,16 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                         
                                         {galleryImages.length > 0 && (
                                             <div className="space-y-3">
-                                                <div className="relative">
+                                                <div className="relative bg-gray-100 rounded-lg border border-gray-100 flex items-center justify-center">
                                                     <img
                                                         src={galleryImages[Math.min(activeImageIndex, galleryImages.length - 1)]?.url}
                                                         alt={detailListing.title}
-                                                        className="w-full rounded-lg border border-gray-100 object-cover max-h-96"
+                                                        className="max-h-[70vh] w-full object-contain transition-transform duration-200 cursor-zoom-in"
+                                                        onClick={() => {
+                                                            const target = galleryImages[Math.min(activeImageIndex, galleryImages.length - 1)];
+                                                            if (!target?.url) return;
+                                                            window.open(target.url, '_blank', 'noopener');
+                                                        }}
                                                         onError={(e) => {
                                                             e.target.onerror = null;
                                                             e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
@@ -997,6 +1002,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                                             {activeImageIndex + 1} / {galleryImages.length}
                                                         </span>
                                                     )}
+                                                    <span className="absolute bottom-2 right-2 text-xs text-gray-500 bg-white/70 px-2 py-1 rounded-md">点击查看原图</span>
                                                 </div>
                                                 {galleryImages.length > 1 && (
                                                     <div className="flex flex-wrap gap-2">
