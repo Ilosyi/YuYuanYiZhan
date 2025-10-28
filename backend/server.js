@@ -255,6 +255,20 @@ async function initializeDatabase() {
         await pool.execute(createUserFollowsTableSQL);
         await pool.execute(createUserFavoritesTableSQL);
         await pool.execute(createEmailVerificationsTableSQL);
+        // 回复表二级评论支持：为 replies 表添加 parent_reply_id（幂等）
+        try {
+            await pool.execute('ALTER TABLE replies ADD COLUMN parent_reply_id INT NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 replies 表添加 parent_reply_id 失败：', e.message);
+            }
+        }
+        // 为 parent_reply_id 建立索引（幂等）
+        try {
+            await pool.execute('CREATE INDEX idx_replies_parent ON replies(parent_reply_id)');
+        } catch (e) {
+            // 索引已存在时静默
+        }
         // 为图书教材细分添加可选字段：book_type（课内教材/课外教材/笔记/其他）、book_major（所属专业，文本）
         try {
             await pool.execute('ALTER TABLE listings ADD COLUMN book_type VARCHAR(50) NULL');
@@ -1590,14 +1604,36 @@ app.get('/api/listings/:id/detail', async (req, res) => {
             [listingId]
         );
         listing.images = images;
-        const [replies] = await pool.execute(`
-            SELECT r.id, r.user_id, r.user_name, r.content, r.created_at
+        const [replyRows] = await pool.execute(`
+            SELECT r.id, r.user_id, r.user_name, r.content, r.created_at, r.parent_reply_id
             FROM replies r
             WHERE r.listing_id = ?
             ORDER BY r.created_at ASC
         `, [listingId]);
 
-        res.json({ listing, replies });
+        // 构建二级结构：顶级评论 + children（只到第二层）
+        const byId = new Map();
+        const roots = [];
+        replyRows.forEach(r => {
+            const node = { ...r, children: [] };
+            byId.set(r.id, node);
+        });
+        replyRows.forEach(r => {
+            const node = byId.get(r.id);
+            if (!r.parent_reply_id) {
+                roots.push(node);
+            } else {
+                const parent = byId.get(r.parent_reply_id);
+                if (parent) {
+                    parent.children.push(node);
+                } else {
+                    // 容错：若父级不存在，按顶级处理
+                    roots.push(node);
+                }
+            }
+        });
+
+        res.json({ listing, replies: roots });
     } catch (err) {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
@@ -1838,8 +1874,24 @@ app.post('/api/messages/conversations/:otherUserId/read', authenticateToken, asy
 /** GET /api/listings/:id/replies 获取某帖子的公共回复列表 */
 app.get('/api/listings/:id/replies', async (req, res) => {
     try {
-        const [rows] = await pool.execute('SELECT * FROM replies WHERE listing_id = ? ORDER BY created_at ASC', [req.params.id]);
-        res.json(rows);
+        const listingId = Number(req.params.id);
+        const [rows] = await pool.execute(
+            'SELECT id, user_id, user_name, content, created_at, parent_reply_id FROM replies WHERE listing_id = ? ORDER BY created_at ASC',
+            [listingId]
+        );
+        const byId = new Map();
+        const roots = [];
+        rows.forEach(r => byId.set(r.id, { ...r, children: [] }));
+        rows.forEach(r => {
+            const node = byId.get(r.id);
+            if (!r.parent_reply_id) {
+                roots.push(node);
+            } else {
+                const parent = byId.get(r.parent_reply_id);
+                if (parent) parent.children.push(node); else roots.push(node);
+            }
+        });
+        res.json(roots);
     } catch (err) {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
@@ -1847,20 +1899,102 @@ app.get('/api/listings/:id/replies', async (req, res) => {
 
 /** POST /api/listings/:id/replies 发表公共回复（需登录） */
 app.post('/api/listings/:id/replies', authenticateToken, async (req, res) => {
-    const listingId = req.params.id;
-    const { content } = req.body;
+    const listingId = Number(req.params.id);
+    const { content, parentReplyId } = req.body || {};
     const { id: userId, username: userName } = req.user;
-    if (!content) {
+    const text = String(content || '').trim();
+    if (!text) {
         return res.status(400).json({ message: 'Reply content cannot be empty.' });
     }
     try {
+        let parentId = parentReplyId ? Number(parentReplyId) : null;
+        if (parentId && (!Number.isInteger(parentId) || parentId <= 0)) {
+            parentId = null;
+        }
+
+        if (parentId) {
+            // 验证父评论：需属于同一帖子，且父评论自身为顶级（限制仅二级）
+            const [[parentRow]] = await pool.execute(
+                'SELECT id, listing_id, parent_reply_id FROM replies WHERE id = ? LIMIT 1',
+                [parentId]
+            );
+            if (!parentRow || parentRow.listing_id !== listingId) {
+                return res.status(400).json({ message: '父评论不存在或不属于该帖子。' });
+            }
+            if (parentRow.parent_reply_id) {
+                return res.status(400).json({ message: '仅支持二级评论，无法继续嵌套。' });
+            }
+        }
+
         const [result] = await pool.execute(
-            'INSERT INTO replies (listing_id, user_id, user_name, content) VALUES (?, ?, ?, ?)',
-            [listingId, userId, userName, content]
+            'INSERT INTO replies (listing_id, user_id, user_name, content, parent_reply_id) VALUES (?, ?, ?, ?, ?)',
+            [listingId, userId, userName, text, parentId]
         );
         res.status(201).json({ message: 'Reply posted successfully!', replyId: result.insertId });
     } catch (err) {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+/** PUT /api/replies/:id 编辑回复（仅作者） */
+app.put('/api/replies/:id', authenticateToken, async (req, res) => {
+    const replyId = Number(req.params.id);
+    const { id: userId } = req.user;
+    const content = String(req.body?.content || '').trim();
+    if (!Number.isInteger(replyId) || replyId <= 0) {
+        return res.status(400).json({ message: 'Invalid reply id.' });
+    }
+    if (!content) {
+        return res.status(400).json({ message: '回复内容不能为空。' });
+    }
+    try {
+        const [[row]] = await pool.execute('SELECT id, user_id FROM replies WHERE id = ? LIMIT 1', [replyId]);
+        if (!row) {
+            return res.status(404).json({ message: 'Reply not found.' });
+        }
+        if (row.user_id !== userId) {
+            return res.status(403).json({ message: 'Forbidden: You do not own this reply.' });
+        }
+        await pool.execute('UPDATE replies SET content = ? WHERE id = ?', [content, replyId]);
+        res.json({ message: 'Reply updated successfully.' });
+    } catch (err) {
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+/** DELETE /api/replies/:id 删除回复（仅作者；删除顶级时级联删除其子回复） */
+app.delete('/api/replies/:id', authenticateToken, async (req, res) => {
+    const replyId = Number(req.params.id);
+    const { id: userId } = req.user;
+    if (!Number.isInteger(replyId) || replyId <= 0) {
+        return res.status(400).json({ message: 'Invalid reply id.' });
+    }
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        const [[row]] = await connection.execute('SELECT id, user_id FROM replies WHERE id = ? FOR UPDATE', [replyId]);
+        if (!row) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Reply not found.' });
+        }
+        if (row.user_id !== userId) {
+            await connection.rollback();
+            return res.status(403).json({ message: 'Forbidden: You do not own this reply.' });
+        }
+
+        // 先删除子回复，再删自己（支持顶级/子级统一处理）
+        await connection.execute('DELETE FROM replies WHERE parent_reply_id = ?', [replyId]);
+        await connection.execute('DELETE FROM replies WHERE id = ?', [replyId]);
+
+        await connection.commit();
+        res.json({ message: 'Reply deleted successfully.' });
+    } catch (err) {
+        if (connection) await connection.rollback();
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    } finally {
+        if (connection) connection.release();
     }
 });
 

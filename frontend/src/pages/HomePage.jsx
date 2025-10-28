@@ -233,10 +233,13 @@ const HomePage = ({ onNavigate = () => {} }) => {
 
     const [isDetailOpen, setIsDetailOpen] = useState(false);
     const [detailListing, setDetailListing] = useState(null);
-    const [detailReplies, setDetailReplies] = useState([]);
+    const [detailReplies, setDetailReplies] = useState([]); // 数组：[{ id, user_name, content, created_at, children: [] }]
     const [detailLoading, setDetailLoading] = useState(false);
     const [detailError, setDetailError] = useState('');
     const [replyContent, setReplyContent] = useState('');
+    const [replyingTo, setReplyingTo] = useState(null); // { parentReplyId, targetName }
+    const [editingReplyId, setEditingReplyId] = useState(null);
+    const [editingContent, setEditingContent] = useState('');
     const [activeImageIndex, setActiveImageIndex] = useState(0);
     const [favoriteIds, setFavoriteIds] = useState(() => new Set());
     const pendingDetailRef = useRef(null);
@@ -522,13 +525,32 @@ const HomePage = ({ onNavigate = () => {} }) => {
         onNavigate('messages');
     };
 
+    const normalizeReplies = (rows) => {
+        if (!Array.isArray(rows)) return [];
+        // 若已经是树结构（有 children），直接返回
+        if (rows.some(r => Array.isArray(r.children))) return rows;
+        // 否则尝试按 parent_reply_id 整理
+        const byId = new Map();
+        rows.forEach(r => byId.set(r.id, { ...r, children: [] }));
+        const roots = [];
+        rows.forEach(r => {
+            const node = byId.get(r.id);
+            if (!r.parent_reply_id) roots.push(node);
+            else {
+                const p = byId.get(r.parent_reply_id);
+                if (p) p.children.push(node); else roots.push(node);
+            }
+        });
+        return roots;
+    };
+
     const loadDetail = async (listingId) => {
         setDetailLoading(true);
         setDetailError('');
         try {
             const { data } = await api.get(`/api/listings/${listingId}/detail`);
             setDetailListing(data.listing);
-            setDetailReplies(data.replies || []);
+            setDetailReplies(normalizeReplies(data.replies || []));
             setActiveImageIndex(0);
         } catch (err) {
             console.error(err);
@@ -566,13 +588,81 @@ const HomePage = ({ onNavigate = () => {} }) => {
             return;
         }
         try {
-            await api.post(`/api/listings/${detailListing.id}/replies`, { content });
+            const payload = replyingTo && replyingTo.parentReplyId ? { content, parentReplyId: replyingTo.parentReplyId } : { content };
+            await api.post(`/api/listings/${detailListing.id}/replies`, payload);
             setReplyContent('');
+            setReplyingTo(null);
             await loadDetail(detailListing.id);
         } catch (err) {
             console.error(err);
             toast.error(err.response?.data?.message || '回复失败，请稍后再试。');
         }
+    };
+
+    const totalRepliesCount = useMemo(() => {
+        const countTree = (nodes) => nodes.reduce((acc, n) => acc + 1 + (Array.isArray(n.children) ? n.children.length : 0), 0);
+        return countTree(detailReplies);
+    }, [detailReplies]);
+
+    const handleStartReply = (rootId, targetName) => {
+        setReplyingTo({ parentReplyId: rootId, targetName });
+    };
+
+    const handleStartEdit = (reply) => {
+        setEditingReplyId(reply.id);
+        setEditingContent(reply.content || '');
+    };
+
+    const handleCancelEdit = () => {
+        setEditingReplyId(null);
+        setEditingContent('');
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editingReplyId) return;
+        const content = (editingContent || '').trim();
+        if (!content) {
+            toast.warning('修改后的内容不能为空。');
+            return;
+        }
+        try {
+            await api.put(`/api/replies/${editingReplyId}`, { content });
+            handleCancelEdit();
+            if (detailListing) await loadDetail(detailListing.id);
+        } catch (err) {
+            console.error(err);
+            toast.error(err.response?.data?.message || '编辑失败，请稍后再试。');
+        }
+    };
+
+    const handleDeleteReply = async (replyId) => {
+        let ok = false;
+        try {
+            ok = await confirm({ title: '删除回复', message: '确定要删除这条回复吗？子回复将一并删除。', tone: 'danger', confirmText: '删除', cancelText: '取消' });
+        } catch {
+            ok = window.confirm('确定要删除这条回复吗？子回复将一并删除。');
+        }
+        if (!ok) return;
+        try {
+            await api.delete(`/api/replies/${replyId}`);
+            if (detailListing) await loadDetail(detailListing.id);
+        } catch (err) {
+            console.error(err);
+            toast.error(err.response?.data?.message || '删除失败，请稍后再试。');
+        }
+    };
+
+    const renderWithMentions = (text) => {
+        const s = String(text || '');
+        const parts = s.split(/(@[A-Za-z0-9_]+)/g);
+        return parts.map((part, idx) => {
+            if (/^@[A-Za-z0-9_]+$/.test(part)) {
+                return (
+                    <span key={idx} className="text-indigo-600">{part}</span>
+                );
+            }
+            return <span key={idx}>{part}</span>;
+        });
     };
 
     const galleryImages = useMemo(() => {
@@ -940,18 +1030,69 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                     </div>
 
                                     <div className="pt-4 border-t border-gray-100">
-                                        <h5 className="text-lg font-semibold text-gray-800 mb-3">留言 ({detailReplies.length})</h5>
+                                        <h5 className="text-lg font-semibold text-gray-800 mb-3">留言 ({totalRepliesCount})</h5>
                                         <div className="space-y-3">
                                             {detailReplies.length === 0 && (
                                                 <p className="text-sm text-gray-500">暂无回复，快来抢沙发吧～</p>
                                             )}
-                                            {detailReplies.map((reply) => (
-                                                <div key={reply.id} className="bg-gray-50 rounded-lg px-4 py-3 space-y-1">
+                                            {detailReplies.map((root) => (
+                                                <div key={root.id} className="bg-gray-50 rounded-lg px-4 py-3 space-y-2">
                                                     <div className="flex justify-between text-sm text-gray-500">
-                                                        <span>{reply.user_name}</span>
-                                                        <span>{formatDateTime(reply.created_at)}</span>
+                                                        <span>{root.user_name}</span>
+                                                        <span>{formatDateTime(root.created_at)}</span>
                                                     </div>
-                                                    <p className="text-gray-700 text-sm whitespace-pre-line">{reply.content}</p>
+                                                    {editingReplyId === root.id ? (
+                                                        <div className="space-y-2">
+                                                            <textarea className="w-full px-3 py-2 text-sm border rounded-md" rows={3} value={editingContent} onChange={(e)=>setEditingContent(e.target.value)} />
+                                                            <div className="flex gap-2 text-xs">
+                                                                <button type="button" onClick={handleSaveEdit} className="px-3 py-1 rounded bg-indigo-600 text-white">保存</button>
+                                                                <button type="button" onClick={handleCancelEdit} className="px-3 py-1 rounded border">取消</button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-gray-700 text-sm whitespace-pre-line">{renderWithMentions(root.content)}</p>
+                                                    )}
+                                                    <div className="text-xs text-indigo-600">
+                                                        <button type="button" onClick={() => handleStartReply(root.id, root.user_name)} className="hover:underline mr-3">回复</button>
+                                                        {user && user.id === root.user_id && editingReplyId !== root.id && (
+                                                            <>
+                                                                <button type="button" onClick={() => handleStartEdit(root)} className="hover:underline mr-3 text-gray-600">编辑</button>
+                                                                <button type="button" onClick={() => handleDeleteReply(root.id)} className="hover:underline text-red-600">删除</button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                    {Array.isArray(root.children) && root.children.length > 0 && (
+                                                        <div className="mt-2 space-y-2 pl-3 border-l border-gray-200">
+                                                            {root.children.map((child) => (
+                                                                <div key={child.id} className="bg-white rounded-md px-3 py-2">
+                                                                    <div className="flex justify-between text-xs text-gray-500">
+                                                                        <span>{child.user_name}</span>
+                                                                        <span>{formatDateTime(child.created_at)}</span>
+                                                                    </div>
+                                                                    {editingReplyId === child.id ? (
+                                                                        <div className="space-y-2">
+                                                                            <textarea className="w-full px-3 py-2 text-sm border rounded-md" rows={3} value={editingContent} onChange={(e)=>setEditingContent(e.target.value)} />
+                                                                            <div className="flex gap-2 text-xs">
+                                                                                <button type="button" onClick={handleSaveEdit} className="px-3 py-1 rounded bg-indigo-600 text-white">保存</button>
+                                                                                <button type="button" onClick={handleCancelEdit} className="px-3 py-1 rounded border">取消</button>
+                                                                            </div>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <p className="text-gray-700 text-sm whitespace-pre-line">{renderWithMentions(child.content)}</p>
+                                                                    )}
+                                                                    <div className="text-xs text-indigo-600">
+                                                                        <button type="button" onClick={() => handleStartReply(root.id, child.user_name)} className="hover:underline mr-3">回复</button>
+                                                                        {user && user.id === child.user_id && editingReplyId !== child.id && (
+                                                                            <>
+                                                                                <button type="button" onClick={() => handleStartEdit(child)} className="hover:underline mr-3 text-gray-600">编辑</button>
+                                                                                <button type="button" onClick={() => handleDeleteReply(child.id)} className="hover:underline text-red-600">删除</button>
+                                                                            </>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -961,10 +1102,16 @@ const HomePage = ({ onNavigate = () => {} }) => {
                         </div>
 
                         <div className="border-t border-gray-100 bg-gray-50 px-6 py-4">
+                            {replyingTo && (
+                                <div className="mb-2 text-xs text-gray-600 flex items-center gap-2">
+                                    <span>正在回复：@{replyingTo.targetName}</span>
+                                    <button type="button" className="text-indigo-600 hover:underline" onClick={() => setReplyingTo(null)}>取消</button>
+                                </div>
+                            )}
                             <textarea
                                 value={replyContent}
                                 onChange={(e) => setReplyContent(e.target.value)}
-                                placeholder={user ? '输入你的回复...' : '登录后才能回复'}
+                                placeholder={user ? (replyingTo ? `回复 @${replyingTo.targetName}...` : '输入你的回复...') : '登录后才能回复'}
                                 rows={3}
                                 disabled={!user || detailLoading}
                                 className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
