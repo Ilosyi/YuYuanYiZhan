@@ -70,6 +70,15 @@ const MODE_TEXT = {
     lostfound: '失物招领',
 };
 
+// 图书教材类型筛选（与后端存储一致，使用中文值）
+const BOOK_TYPE_CONFIG = {
+    all: '所有类型',
+    '课内教材': '课内教材',
+    '课外教材': '课外教材',
+    '笔记': '笔记',
+    '其他': '其他',
+};
+
 const formatDateTime = (value) => {
     if (!value) return '';
     try {
@@ -294,6 +303,9 @@ const HomePage = ({ onNavigate = () => {} }) => {
     // 在状态定义部分添加起始地点和目的地点筛选状态
     const [startLocation, setStartLocation] = useState('all');
     const [endLocation, setEndLocation] = useState('all');
+    // 图书教材细分筛选
+    const [bookType, setBookType] = useState('all');
+    const [bookMajor, setBookMajor] = useState('');
     
     // 在模式切换的useEffect中重置地点筛选状态
     useEffect(() => {
@@ -301,8 +313,18 @@ const HomePage = ({ onNavigate = () => {} }) => {
     setItemType('all'); // 重置物品类型筛选
     setStartLocation('all'); // 重置起始地点筛选
     setEndLocation('all'); // 重置目的地点筛选
+    setBookType('all');
+    setBookMajor('');
     setSearchTerm('');
     }, [activeMode]);
+
+    // 分类切换时对图书筛选进行复位
+    useEffect(() => {
+        if (category !== 'books') {
+            setBookType('all');
+            setBookMajor('');
+        }
+    }, [category]);
     
     // 修改fetchListings函数，添加地点筛选参数
     // 确保fetchListings函数中的参数名称正确
@@ -319,7 +341,10 @@ const HomePage = ({ onNavigate = () => {} }) => {
                 itemType: activeMode === 'lostfound' && itemType !== 'all' ? itemType : undefined,
                 // 确保参数名称与后端一致
                 startLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && startLocation !== 'all' ? startLocation : undefined,
-                endLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && endLocation !== 'all' ? endLocation : undefined
+                endLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && endLocation !== 'all' ? endLocation : undefined,
+                // 图书教材细分
+                bookType: (activeMode === 'sale' || activeMode === 'acquire') && category === 'books' && bookType !== 'all' ? bookType : undefined,
+                bookMajor: (activeMode === 'sale' || activeMode === 'acquire') && category === 'books' && bookMajor.trim() ? bookMajor.trim() : undefined,
             },
         });
         setListings(response.data);
@@ -329,7 +354,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
     } finally {
         setIsLoading(false);
     }
-    }, [activeMode, searchTerm, category, itemType, startLocation, endLocation]);
+    }, [activeMode, searchTerm, category, itemType, startLocation, endLocation, bookType, bookMajor]);
     
     // 在UI中添加地点筛选器（在物品类型筛选器之后）
     {/* 仅在出售/收购模式且分类为跑腿服务时显示地点筛选器 */}
@@ -706,6 +731,28 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                 </select>
                             </>
                         )}
+
+                        {/* 仅在出售/收购模式且分类为图书教材时显示图书筛选器 */}
+                        {(activeMode === 'sale' || activeMode === 'acquire') && category === 'books' && (
+                            <>
+                                <select
+                                    value={bookType}
+                                    onChange={(e) => setBookType(e.target.value)}
+                                    className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white min-w-[140px]`}
+                                >
+                                    {Object.entries(BOOK_TYPE_CONFIG).map(([key, label]) => (
+                                        <option key={key} value={key}>{label}</option>
+                                    ))}
+                                </select>
+                                <input
+                                    type="text"
+                                    value={bookMajor}
+                                    onChange={(e) => setBookMajor(e.target.value)}
+                                    placeholder="所属专业（可输入）"
+                                    className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white`}
+                                />
+                            </>
+                        )}
                     </div>
                 </div>
             </div>
@@ -736,6 +783,12 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                             <span>发布者：{detailListing.owner_name || detailListing.user_name}</span>
                                             <span>发布时间：{formatDateTime(detailListing.created_at)}</span>
                                         </div>
+                                        {detailListing.category === 'books' && (detailListing.book_type || detailListing.book_major) && (
+                                            <div className="flex flex-wrap gap-3 text-sm text-gray-600">
+                                                {detailListing.book_type && <span>图书类型：{detailListing.book_type}</span>}
+                                                {detailListing.book_major && <span>所属专业：{detailListing.book_major}</span>}
+                                            </div>
+                                        )}
                                         {detailListing.type === 'sale' && (
                                             <div className="text-2xl font-semibold text-emerald-600">
                                                 {detailListing.price ? `¥${Number(detailListing.price).toLocaleString()}` : '议价'}

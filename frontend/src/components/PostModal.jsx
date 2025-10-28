@@ -21,6 +21,14 @@ const LOCATION_OPTIONS = [
     { value: 'other', label: '其他 (请自填)' }
 ];
 
+// 图书教材类型（存储与展示均使用中文，便于筛选与直观显示）
+const BOOK_TYPE_OPTIONS = [
+    { value: '课内教材', label: '课内教材' },
+    { value: '课外教材', label: '课外教材' },
+    { value: '笔记', label: '笔记' },
+    { value: '其他', label: '其他' },
+];
+
 const CATEGORY_OPTIONS = {
     sale: [
         { value: 'electronics', label: '电子产品' },
@@ -96,7 +104,10 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             lostFoundItem,
             // 只保留必要的地点字段
             startLocation: editingItem?.start_location || '',
-            endLocation: editingItem?.end_location || ''
+            endLocation: editingItem?.end_location || '',
+            // 图书教材细分字段（仅在分类为“图书教材”时生效）
+            bookType: editingItem?.book_type || '',
+            bookMajor: editingItem?.book_major || ''
             // 移除自定义地点字段
         };
     }, [editingItem]);
@@ -159,6 +170,9 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         // 将数据库中的下划线命名字段映射到表单的驼峰命名状态
                         startLocation: listing.start_location || '',
                         endLocation: listing.end_location || '',
+                        // 图书教材细分字段
+                        bookType: listing.book_type || '',
+                        bookMajor: listing.book_major || '',
                         // 如果地点是自定义地点，需要设置相应的字段
                         customStartLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.start_location) ? '' : listing.start_location || '',
                         customEndLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.end_location) ? '' : listing.end_location || ''
@@ -203,7 +217,10 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     lostFoundItem: '',
     // 简化地点字段重置
     startLocation: '',
-    endLocation: ''
+    endLocation: '',
+    // 切换类型时重置图书字段
+    bookType: '',
+    bookMajor: ''
     // 移除自定义地点字段
     }));
     return;
@@ -246,7 +263,9 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                     endLocation: '',
                     customStartLocation: '',
                     customEndLocation: ''
-                })
+                }),
+                // 非图书分类时清空图书字段
+                ...(value !== 'books' ? { bookType: '', bookMajor: '' } : {})
             }));
         }
         return;
@@ -504,6 +523,37 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                                 />
                             </div>
                         )}
+                        {/* 图书教材细分字段（仅在 出售/收购 且 分类为 图书教材 时显示） */}
+                        {(formData.type === 'sale' || formData.type === 'acquire') && formData.category === 'books' && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">类型（可选）</label>
+                                    <select
+                                        name="bookType"
+                                        value={formData.bookType}
+                                        onChange={handleInputChange}
+                                        className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                    >
+                                        <option value="">不选择</option>
+                                        {BOOK_TYPE_OPTIONS.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">所属专业（可选，可自填）</label>
+                                    <input
+                                        type="text"
+                                        name="bookMajor"
+                                        value={formData.bookMajor}
+                                        onChange={handleInputChange}
+                                        placeholder="如：计算机、物理、数学等"
+                                        className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                    />
+                                </div>
+                            </div>
+                        )}
+
                         {/* 添加地点字段 */}
                         {showLocationFields && (
                             <div className="space-y-4">

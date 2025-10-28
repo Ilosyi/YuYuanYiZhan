@@ -255,6 +255,21 @@ async function initializeDatabase() {
         await pool.execute(createUserFollowsTableSQL);
         await pool.execute(createUserFavoritesTableSQL);
         await pool.execute(createEmailVerificationsTableSQL);
+        // 为图书教材细分添加可选字段：book_type（课内教材/课外教材/笔记/其他）、book_major（所属专业，文本）
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN book_type VARCHAR(50) NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 book_type 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN book_major VARCHAR(100) NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 book_major 失败：', e.message);
+            }
+        }
         await pool.execute(`
             INSERT INTO listing_images (listing_id, image_url, sort_order)
             SELECT l.id, l.image_url, 0
@@ -1149,6 +1164,20 @@ app.get('/api/listings', async (req, res) => {
             sql += ' AND l.category LIKE ?';
             params.push(`_%${itemType}`);
         }
+
+        // 处理图书教材细分筛选（仅在 出售/收购 且 分类为 图书教材 时）
+        const bookType = sanitizeNullableString(req.query?.bookType ?? req.query?.book_type, 50);
+        const bookMajor = sanitizeNullableString(req.query?.bookMajor ?? req.query?.book_major, 100);
+        if ((type === 'sale' || type === 'acquire') && category === 'books') {
+            if (bookType && bookType !== 'all') {
+                sql += ' AND l.book_type = ?';
+                params.push(bookType);
+            }
+            if (bookMajor) {
+                sql += ' AND l.book_major LIKE ?';
+                params.push(`%${bookMajor}%`);
+            }
+        }
         
         // 添加地点筛选（仅对跑腿服务）
         if ((type === 'sale' || type === 'acquire') && category === 'service') {
@@ -1227,14 +1256,20 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
         connection = await pool.getConnection();
         await connection.beginTransaction();
 
+        const rawBookType = sanitizeNullableString(req.body?.bookType ?? req.body?.book_type, 50);
+        const rawBookMajor = sanitizeNullableString(req.body?.bookMajor ?? req.body?.book_major, 100);
+        const bookType = category === 'books' ? rawBookType : null;
+        const bookMajor = category === 'books' ? rawBookMajor : null;
+
         const sql = `
-            INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url, start_location, end_location)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url, book_type, book_major, start_location, end_location)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         const startLoc = normalizeFormLocation(start_location);
         const endLoc = normalizeFormLocation(end_location);
         const [result] = await connection.execute(sql, [
             title, description, price || 0, category, userId, userName, type, coverImageUrl,
+            bookType, bookMajor,
             startLoc, endLoc
         ]);
 
@@ -1336,15 +1371,22 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
             ? updatedImages[0].image_url
             : existingImageUrl || null;
 
+        const rawBookType = sanitizeNullableString(req.body?.bookType ?? req.body?.book_type, 50);
+        const rawBookMajor = sanitizeNullableString(req.body?.bookMajor ?? req.body?.book_major, 100);
+        const bookType = category === 'books' ? rawBookType : null;
+        const bookMajor = category === 'books' ? rawBookMajor : null;
+
         const sql = `
             UPDATE listings SET title = ?, description = ?, price = ?, category = ?, image_url = ?,
+            book_type = ?, book_major = ?,
             start_location = ?, end_location = ?
             WHERE id = ? AND user_id = ?
         `;
         const startLoc = normalizeFormLocation(start_location);
         const endLoc = normalizeFormLocation(end_location);
         await connection.execute(sql, [
-            title, description, price, category, coverImageUrl, 
+            title, description, price, category, coverImageUrl,
+            bookType, bookMajor,
             startLoc, endLoc,
             listingId, userId
         ]);
