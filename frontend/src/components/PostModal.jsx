@@ -21,6 +21,15 @@ const LOCATION_OPTIONS = [
     { value: 'other', label: '其他 (请自填)' }
 ];
 
+// 讲座地点预设
+const LECTURE_LOCATION_OPTIONS = [
+    { value: '东九楼', label: '东九楼' },
+    { value: '东十二楼', label: '东十二楼' },
+    { value: '西十二楼', label: '西十二楼' },
+    { value: '西五楼', label: '西五楼' },
+    { value: 'other', label: '其他 (请自填)' },
+];
+
 // 图书教材类型（存储与展示均使用中文，便于筛选与直观显示）
 const BOOK_TYPE_OPTIONS = [
     { value: '课内教材', label: '课内教材' },
@@ -33,6 +42,9 @@ const CATEGORY_OPTIONS = {
     sale: [
         { value: 'electronics', label: '电子产品' },
         { value: 'books', label: '图书教材' },
+        { value: 'beauty', label: '美妆护肤' },
+        { value: 'stationery', label: '文具' },
+        { value: 'lecture', label: '代课讲座' },
         { value: 'clothing', label: '服饰鞋包' },
         { value: 'life', label: '生活用品' },
         { value: 'service', label: '跑腿服务' },
@@ -41,6 +53,9 @@ const CATEGORY_OPTIONS = {
     acquire: [
         { value: 'electronics', label: '电子产品' },
         { value: 'books', label: '图书教材' },
+        { value: 'beauty', label: '美妆护肤' },
+        { value: 'stationery', label: '文具' },
+        { value: 'lecture', label: '代课讲座' },
         { value: 'clothing', label: '服饰鞋包' },
         { value: 'life', label: '生活用品' },
         { value: 'service', label: '跑腿服务' },
@@ -107,7 +122,12 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             endLocation: editingItem?.end_location || '',
             // 图书教材细分字段（仅在分类为“图书教材”时生效）
             bookType: editingItem?.book_type || '',
-            bookMajor: editingItem?.book_major || ''
+            bookMajor: editingItem?.book_major || '',
+            // 代课讲座字段
+            lectureLocation: editingItem?.lecture_location || '',
+            lectureStartAt: editingItem?.lecture_start_at ? editingItem.lecture_start_at.replace(' ', 'T').slice(0,16) : '',
+            lectureEndAt: editingItem?.lecture_end_at ? editingItem.lecture_end_at.replace(' ', 'T').slice(0,16) : '',
+            customLectureLocation: ''
             // 移除自定义地点字段
         };
     }, [editingItem]);
@@ -173,6 +193,10 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         // 图书教材细分字段
                         bookType: listing.book_type || '',
                         bookMajor: listing.book_major || '',
+                        // 代课讲座字段
+                        lectureLocation: listing.lecture_location || '',
+                        lectureStartAt: listing.lecture_start_at ? String(listing.lecture_start_at).replace(' ', 'T').slice(0,16) : '',
+                        lectureEndAt: listing.lecture_end_at ? String(listing.lecture_end_at).replace(' ', 'T').slice(0,16) : '',
                         // 如果地点是自定义地点，需要设置相应的字段
                         customStartLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.start_location) ? '' : listing.start_location || '',
                         customEndLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.end_location) ? '' : listing.end_location || ''
@@ -265,7 +289,9 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                     customEndLocation: ''
                 }),
                 // 非图书分类时清空图书字段
-                ...(value !== 'books' ? { bookType: '', bookMajor: '' } : {})
+                ...(value !== 'books' ? { bookType: '', bookMajor: '' } : {}),
+                // 非代课讲座分类时清空讲座字段
+                ...(value !== 'lecture' ? { lectureLocation: '', lectureStartAt: '', lectureEndAt: '', customLectureLocation: '' } : {})
             }));
         }
         return;
@@ -360,6 +386,17 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         }
         if (endLoc) {
             submissionData.append('end_location', endLoc);
+        }
+
+        // 代课讲座字段（仅当分类为 lecture 时）
+        if (formData.category === 'lecture') {
+            let lecLoc = formData.lectureLocation;
+            if (lecLoc === 'other') {
+                lecLoc = (formData.customLectureLocation || '').trim();
+            }
+            if (lecLoc) submissionData.append('lecture_location', lecLoc);
+            if (formData.lectureStartAt) submissionData.append('lecture_start_at', formData.lectureStartAt);
+            if (formData.lectureEndAt) submissionData.append('lecture_end_at', formData.lectureEndAt);
         }
     
         if (!(formData.type === 'sale' || formData.type === 'acquire')) {
@@ -523,6 +560,59 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                                 />
                             </div>
                         )}
+                        {/* 代课讲座字段（仅在 出售/收购 且 分类为 代课讲座 时显示） */}
+                        {(formData.type === 'sale' || formData.type === 'acquire') && formData.category === 'lecture' && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">讲座地点（可选）</label>
+                                    <div className="mt-1">
+                                        <select
+                                            name="lectureLocation"
+                                            value={formData.lectureLocation}
+                                            onChange={handleInputChange}
+                                            className={`w-full px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                        >
+                                            <option value="">请选择地点</option>
+                                            {LECTURE_LOCATION_OPTIONS.map(opt => (
+                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                            ))}
+                                        </select>
+                                        {formData.lectureLocation === 'other' && (
+                                            <input
+                                                type="text"
+                                                name="customLectureLocation"
+                                                value={formData.customLectureLocation}
+                                                onChange={handleInputChange}
+                                                placeholder="请输入自定义地点"
+                                                className={`w-full mt-2 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                            />
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">开始时间（可选）</label>
+                                        <input
+                                            type="datetime-local"
+                                            name="lectureStartAt"
+                                            value={formData.lectureStartAt}
+                                            onChange={handleInputChange}
+                                            className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">结束时间（可选）</label>
+                                        <input
+                                            type="datetime-local"
+                                            name="lectureEndAt"
+                                            value={formData.lectureEndAt}
+                                            onChange={handleInputChange}
+                                            className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         {/* 图书教材细分字段（仅在 出售/收购 且 分类为 图书教材 时显示） */}
                         {(formData.type === 'sale' || formData.type === 'acquire') && formData.category === 'books' && (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -547,7 +637,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                                         name="bookMajor"
                                         value={formData.bookMajor}
                                         onChange={handleInputChange}
-                                        placeholder="如：计算机、物理、数学等"
+                                        placeholder="如：通识、计算机、物理、数学等"
                                         className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
                                     />
                                 </div>

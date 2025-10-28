@@ -14,6 +14,9 @@ const CATEGORY_CONFIG = {
         all: '所有分类',
         electronics: '电子产品',
         books: '图书教材',
+        beauty: '美妆护肤',
+        stationery: '文具',
+        lecture: '代课讲座',
         clothing: '服饰鞋包',
         life: '生活用品',
         service: '跑腿服务',
@@ -23,6 +26,9 @@ const CATEGORY_CONFIG = {
         all: '所有分类',
         electronics: '电子产品',
         books: '图书教材',
+        beauty: '美妆护肤',
+        stationery: '文具',
+        lecture: '代课讲座',
         clothing: '服饰鞋包',
         life: '生活用品',
         service: '跑腿服务',
@@ -306,6 +312,11 @@ const HomePage = ({ onNavigate = () => {} }) => {
     // 图书教材细分筛选
     const [bookType, setBookType] = useState('all');
     const [bookMajor, setBookMajor] = useState('');
+    // 代课讲座筛选
+    const [lectureLocation, setLectureLocation] = useState('all');
+    const [customLectureLocation, setCustomLectureLocation] = useState('');
+    const [lectureStartFrom, setLectureStartFrom] = useState('');
+    const [lectureEndTo, setLectureEndTo] = useState('');
     
     // 在模式切换的useEffect中重置地点筛选状态
     useEffect(() => {
@@ -315,6 +326,10 @@ const HomePage = ({ onNavigate = () => {} }) => {
     setEndLocation('all'); // 重置目的地点筛选
     setBookType('all');
     setBookMajor('');
+    setLectureLocation('all');
+    setCustomLectureLocation('');
+    setLectureStartFrom('');
+    setLectureEndTo('');
     setSearchTerm('');
     }, [activeMode]);
 
@@ -323,6 +338,12 @@ const HomePage = ({ onNavigate = () => {} }) => {
         if (category !== 'books') {
             setBookType('all');
             setBookMajor('');
+        }
+        if (category !== 'lecture') {
+            setLectureLocation('all');
+            setCustomLectureLocation('');
+            setLectureStartFrom('');
+            setLectureEndTo('');
         }
     }, [category]);
     
@@ -345,6 +366,12 @@ const HomePage = ({ onNavigate = () => {} }) => {
                 // 图书教材细分
                 bookType: (activeMode === 'sale' || activeMode === 'acquire') && category === 'books' && bookType !== 'all' ? bookType : undefined,
                 bookMajor: (activeMode === 'sale' || activeMode === 'acquire') && category === 'books' && bookMajor.trim() ? bookMajor.trim() : undefined,
+                // 代课讲座筛选
+                lectureLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'lecture' && (lectureLocation !== 'all' || customLectureLocation.trim())
+                    ? (lectureLocation === 'other' ? (customLectureLocation.trim() || undefined) : lectureLocation)
+                    : undefined,
+                lectureStartFrom: (activeMode === 'sale' || activeMode === 'acquire') && category === 'lecture' && lectureStartFrom ? lectureStartFrom : undefined,
+                lectureEndTo: (activeMode === 'sale' || activeMode === 'acquire') && category === 'lecture' && lectureEndTo ? lectureEndTo : undefined,
             },
         });
         setListings(response.data);
@@ -354,7 +381,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
     } finally {
         setIsLoading(false);
     }
-    }, [activeMode, searchTerm, category, itemType, startLocation, endLocation, bookType, bookMajor]);
+    }, [activeMode, searchTerm, category, itemType, startLocation, endLocation, bookType, bookMajor, lectureLocation, customLectureLocation, lectureStartFrom, lectureEndTo]);
     
     // 在UI中添加地点筛选器（在物品类型筛选器之后）
     {/* 仅在出售/收购模式且分类为跑腿服务时显示地点筛选器 */}
@@ -732,6 +759,43 @@ const HomePage = ({ onNavigate = () => {} }) => {
                             </>
                         )}
 
+                        {/* 仅在出售/收购模式且分类为代课讲座时显示讲座筛选器 */}
+                        {(activeMode === 'sale' || activeMode === 'acquire') && category === 'lecture' && (
+                            <>
+                                <select
+                                    value={lectureLocation}
+                                    onChange={(e) => setLectureLocation(e.target.value)}
+                                    className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white min-w-[140px]`}
+                                >
+                                    <option value="all">讲座地点</option>
+                                    {['东九楼','东十二楼','西十二楼','西五楼','other'].map((loc) => (
+                                        <option key={loc} value={loc}>{loc === 'other' ? '其他地点' : loc}</option>
+                                    ))}
+                                </select>
+                                {lectureLocation === 'other' && (
+                                    <input
+                                        type="text"
+                                        value={customLectureLocation}
+                                        onChange={(e) => setCustomLectureLocation(e.target.value)}
+                                        placeholder="自定义地点"
+                                        className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white`}
+                                    />
+                                )}
+                                <input
+                                    type="datetime-local"
+                                    value={lectureStartFrom}
+                                    onChange={(e) => setLectureStartFrom(e.target.value)}
+                                    className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white`}
+                                />
+                                <input
+                                    type="datetime-local"
+                                    value={lectureEndTo}
+                                    onChange={(e) => setLectureEndTo(e.target.value)}
+                                    className={`px-4 py-2 border rounded-md ${getModuleTheme(activeMode).inputFocus} bg-white`}
+                                />
+                            </>
+                        )}
+
                         {/* 仅在出售/收购模式且分类为图书教材时显示图书筛选器 */}
                         {(activeMode === 'sale' || activeMode === 'acquire') && category === 'books' && (
                             <>
@@ -787,6 +851,19 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                             <div className="flex flex-wrap gap-3 text-sm text-gray-600">
                                                 {detailListing.book_type && <span>图书类型：{detailListing.book_type}</span>}
                                                 {detailListing.book_major && <span>所属专业：{detailListing.book_major}</span>}
+                                            </div>
+                                        )}
+                                        {detailListing.category === 'lecture' && (detailListing.lecture_location || detailListing.lecture_start_at || detailListing.lecture_end_at) && (
+                                            <div className="flex flex-wrap gap-3 text-sm text-gray-600">
+                                                {detailListing.lecture_location && <span>讲座地点：{detailListing.lecture_location}</span>}
+                                                {(detailListing.lecture_start_at || detailListing.lecture_end_at) && (
+                                                    <span>
+                                                        时间段：
+                                                        {detailListing.lecture_start_at ? formatDateTime(detailListing.lecture_start_at) : '未定'}
+                                                        {` ~ `}
+                                                        {detailListing.lecture_end_at ? formatDateTime(detailListing.lecture_end_at) : '未定'}
+                                                    </span>
+                                                )}
                                             </div>
                                         )}
                                         {detailListing.type === 'sale' && (

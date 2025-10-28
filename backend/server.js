@@ -270,6 +270,28 @@ async function initializeDatabase() {
                 console.warn('为 listings 表添加 book_major 失败：', e.message);
             }
         }
+        // 为代课讲座分类添加字段：lecture_location、lecture_start_at、lecture_end_at
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN lecture_location VARCHAR(100) NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 lecture_location 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN lecture_start_at DATETIME NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 lecture_start_at 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN lecture_end_at DATETIME NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 lecture_end_at 失败：', e.message);
+            }
+        }
         await pool.execute(`
             INSERT INTO listing_images (listing_id, image_url, sort_order)
             SELECT l.id, l.image_url, 0
@@ -1178,6 +1200,34 @@ app.get('/api/listings', async (req, res) => {
                 params.push(`%${bookMajor}%`);
             }
         }
+
+        // 处理代课讲座筛选（仅在 出售/收购 且 分类为 代课讲座 时）
+        if ((type === 'sale' || type === 'acquire') && category === 'lecture') {
+            const lectureLocation = sanitizeNullableString(req.query?.lectureLocation ?? req.query?.lecture_location, 100);
+            const lectureStartFromRaw = sanitizeNullableString(req.query?.lectureStartFrom, 100);
+            const lectureEndToRaw = sanitizeNullableString(req.query?.lectureEndTo, 100);
+            if (lectureLocation && lectureLocation !== 'all') {
+                sql += ' AND l.lecture_location = ?';
+                params.push(lectureLocation);
+            }
+            // 时间段筛选：若同时提供 from/to，则取区间内；只提供 from 则筛选与 from 之后仍有交集；只提供 to 则筛选至 to 之前有交集
+            const parseTime = (s) => {
+                try { return s ? new Date(s) : null; } catch { return null; }
+            };
+            const from = parseTime(lectureStartFromRaw);
+            const to = parseTime(lectureEndToRaw);
+            if (from && to) {
+                // 区间重叠判断：lecture_end_at >= from AND lecture_start_at <= to
+                sql += ' AND (l.lecture_end_at IS NOT NULL AND l.lecture_end_at >= ?) AND (l.lecture_start_at IS NOT NULL AND l.lecture_start_at <= ?)';
+                params.push(from, to);
+            } else if (from) {
+                sql += ' AND (l.lecture_end_at IS NOT NULL AND l.lecture_end_at >= ?)';
+                params.push(from);
+            } else if (to) {
+                sql += ' AND (l.lecture_start_at IS NOT NULL AND l.lecture_start_at <= ?)';
+                params.push(to);
+            }
+        }
         
         // 添加地点筛选（仅对跑腿服务）
         if ((type === 'sale' || type === 'acquire') && category === 'service') {
@@ -1261,15 +1311,32 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
         const bookType = category === 'books' ? rawBookType : null;
         const bookMajor = category === 'books' ? rawBookMajor : null;
 
+        // 代课讲座字段处理
+        const rawLectureLocation = sanitizeNullableString(req.body?.lectureLocation ?? req.body?.lecture_location, 100);
+        const parseDateValue = (v) => {
+            if (!v) return null;
+            try { const d = new Date(v); return isNaN(d.getTime()) ? null : d; } catch { return null; }
+        };
+        const lectureLocation = category === 'lecture' ? rawLectureLocation : null;
+        const lectureStartAt = category === 'lecture' ? parseDateValue(req.body?.lectureStartAt ?? req.body?.lecture_start_at) : null;
+        const lectureEndAt = category === 'lecture' ? parseDateValue(req.body?.lectureEndAt ?? req.body?.lecture_end_at) : null;
+
         const sql = `
-            INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url, book_type, book_major, start_location, end_location)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url,
+                                  book_type, book_major,
+                                  lecture_location, lecture_start_at, lecture_end_at,
+                                  start_location, end_location)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    ?, ?)
         `;
         const startLoc = normalizeFormLocation(start_location);
         const endLoc = normalizeFormLocation(end_location);
         const [result] = await connection.execute(sql, [
             title, description, price || 0, category, userId, userName, type, coverImageUrl,
             bookType, bookMajor,
+            lectureLocation, lectureStartAt, lectureEndAt,
             startLoc, endLoc
         ]);
 
@@ -1376,9 +1443,20 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
         const bookType = category === 'books' ? rawBookType : null;
         const bookMajor = category === 'books' ? rawBookMajor : null;
 
+        // 代课讲座字段
+        const rawLectureLocation = sanitizeNullableString(req.body?.lectureLocation ?? req.body?.lecture_location, 100);
+        const parseDateValue = (v) => {
+            if (!v) return null;
+            try { const d = new Date(v); return isNaN(d.getTime()) ? null : d; } catch { return null; }
+        };
+        const lectureLocation = category === 'lecture' ? rawLectureLocation : null;
+        const lectureStartAt = category === 'lecture' ? parseDateValue(req.body?.lectureStartAt ?? req.body?.lecture_start_at) : null;
+        const lectureEndAt = category === 'lecture' ? parseDateValue(req.body?.lectureEndAt ?? req.body?.lecture_end_at) : null;
+
         const sql = `
             UPDATE listings SET title = ?, description = ?, price = ?, category = ?, image_url = ?,
             book_type = ?, book_major = ?,
+            lecture_location = ?, lecture_start_at = ?, lecture_end_at = ?,
             start_location = ?, end_location = ?
             WHERE id = ? AND user_id = ?
         `;
@@ -1387,6 +1465,7 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
         await connection.execute(sql, [
             title, description, price, category, coverImageUrl,
             bookType, bookMajor,
+            lectureLocation, lectureStartAt, lectureEndAt,
             startLoc, endLoc,
             listingId, userId
         ]);
