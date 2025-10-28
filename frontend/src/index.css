@@ -1,3 +1,46 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* --- Mobile-friendly base tweaks --- */
+html, body, #root {
+	height: 100%;
+}
+
+/* Avoid iOS Safari input zoom by ensuring 16px font-size on inputs */
+@media (max-width: 640px) {
+	input, select, textarea {
+		font-size: 16px;
+	}
+}
+
+/* Safe area insets for notches and home indicators */
+:root {
+	--sat: env(safe-area-inset-top);
+	--sab: env(safe-area-inset-bottom);
+	--sal: env(safe-area-inset-left);
+	--sar: env(safe-area-inset-right);
+}
+
+/* Apply left/right padding to avoid clipping on curved screens */
+body {
+	padding-left: var(--sal);
+	padding-right: var(--sar);
+	-webkit-tap-highlight-color: transparent;
+}
+
+/* Optional helpers: add to fixed header/footer containers if needed */
+.header-safe { padding-top: var(--sat); }
+.footer-safe { padding-bottom: var(--sab); }
+
+/* Improve word breaking for long tokens on mobile */
+.break-anywhere {
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+/* Touch target helper for buttons/links (opt-in) */
+.touch-target {
+	min-height: 44px;
+	min-width: 44px;
+}

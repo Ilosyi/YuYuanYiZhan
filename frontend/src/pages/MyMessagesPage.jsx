@@ -532,8 +532,8 @@ const MyMessagesPage = () => {
                 </span>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-lg overflow-hidden h-[70vh] flex">
-                <aside className="w-1/3 border-r border-gray-100 flex flex-col">
+            <div className="bg-white rounded-2xl shadow-lg overflow-hidden h-[calc(100vh-11rem)] md:h-[70vh] flex">
+                <aside className={`${selectedConversation ? 'hidden' : 'flex'} md:flex w-full md:w-1/3 border-r border-gray-100 flex-col`}> 
                     <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                         <h3 className="text-lg font-semibold text-gray-700">会话列表</h3>
                         <button
@@ -562,13 +562,23 @@ const MyMessagesPage = () => {
                     </div>
                 </aside>
 
-                <section className="w-2/3 flex flex-col">
+                <section className={`${selectedConversation ? 'flex' : 'hidden'} md:flex w-full md:w-2/3 flex flex-col`}> 
                     {selectedConversation ? (
                         <>
-                            <header className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50">
-                                <div>
-                                    <p className="text-lg font-semibold text-gray-800">{selectedConversation.otherUsername}</p>
-                                    <p className="text-xs text-gray-400">保持礼貌，文明交流</p>
+                            <header className="px-4 md:px-6 py-3 md:py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        className="md:hidden text-gray-600 hover:text-gray-800 px-2 py-1 -ml-2"
+                                        onClick={() => setSelectedConversation(null)}
+                                        aria-label="返回会话列表"
+                                    >
+                                        ← 返回
+                                    </button>
+                                    <div>
+                                        <p className="text-base md:text-lg font-semibold text-gray-800">{selectedConversation.otherUsername}</p>
+                                        <p className="text-[11px] md:text-xs text-gray-400">保持礼貌，文明交流</p>
+                                    </div>
                                 </div>
                             </header>
 
@@ -595,7 +605,7 @@ const MyMessagesPage = () => {
                                 <div ref={messagesEndRef} />
                             </div>
 
-                            <footer className="border-t border-gray-100 bg-white px-6 py-4">
+                            <footer className="border-t border-gray-100 bg-white px-4 md:px-6 py-3 md:py-4">
                                 <div className="rounded-xl border border-gray-200 bg-gray-50 focus-within:border-indigo-400 transition-colors">
                                     <textarea
                                         value={inputValue}
@@ -605,7 +615,7 @@ const MyMessagesPage = () => {
                                         placeholder="输入消息，按 Enter 发送"
                                         className="w-full bg-transparent resize-none px-4 py-3 text-sm focus:outline-none"
                                     />
-                                    <div className="flex justify-between items-center px-4 pb-3">
+                                    <div className="flex justify-between items-center px-4 pb-2 md:pb-3">
                                         <span className="text-xs text-gray-400">请勿发送垃圾广告或违规内容</span>
                                         <button
                                             type="button"

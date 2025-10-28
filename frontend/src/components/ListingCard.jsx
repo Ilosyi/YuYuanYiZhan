@@ -45,7 +45,7 @@ const ListingCard = ({
     return (
         <div className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-shadow duration-300 flex flex-col">
             <div
-                className="relative h-48 w-full bg-gray-200 overflow-hidden cursor-pointer"
+                className="relative h-36 sm:h-40 md:h-48 w-full bg-gray-200 overflow-hidden cursor-pointer"
                 onClick={handleOpenDetail}
             >
                 <img src={imageUrl} alt={item.title} className="w-full h-full object-cover" onError={(e) => { e.target.onerror = null; e.target.src='https://via.placeholder.com/400x300?text=Image+Error' }}/>
@@ -55,17 +55,17 @@ const ListingCard = ({
                     </span>
                 )}
             </div>
-            <div className="p-4 flex flex-col flex-grow justify-between">
+            <div className="p-3 sm:p-4 flex flex-col flex-grow justify-between">
                 <div>
-                    <div className="flex justify-between items-start mb-2">
-                        <h3 className="text-lg font-semibold text-gray-900 line-clamp-2">{item.title}</h3>
+                    <div className="flex justify-between items-start mb-1 sm:mb-2">
+                        <h3 className="text-base sm:text-lg font-semibold text-gray-900 line-clamp-2">{item.title}</h3>
                         {['sale', 'acquire'].includes(item.type) && (
                             <span className={`px-2 py-1 text-xs font-semibold rounded-full flex-shrink-0 ${statusColor[item.status]}`}>
                                 {statusText[item.status]}
                             </span>
                         )}
                     </div>
-                    <p className="text-gray-600 text-sm mb-3 line-clamp-2">{item.description}</p>
+                    <p className="text-gray-600 text-sm mb-2 sm:mb-3 line-clamp-2">{item.description}</p>
                 </div>
                 <div className="mt-auto">
                     {hasNumericPrice && (
@@ -129,7 +129,7 @@ const ListingCard = ({
                         </div>
                     )}
                     
-                    <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between text-xs text-gray-400">
+                    <div className="mt-3 sm:mt-4 pt-3 border-t border-gray-100 flex justify-between text-xs text-gray-400">
                         <span>发布者: {item.user_name}</span>
                         <span>{new Date(item.created_at).toLocaleDateString()}</span>
                     </div>

@@ -1179,7 +1179,7 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
                         {viewedListings.length === 0 ? (
                             <p className="text-sm text-gray-500">该用户暂无发布内容。</p>
                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 gap-3 md:gap-5">
                                 {viewedListings.map((item) => (
                                     <ListingCard
                                         key={item.id}
@@ -1198,8 +1198,8 @@ const UserCenterPage = ({ currentUser, onNavigate = () => {} }) => {
             )}
 
             {isDetailOpen && (
-                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4 py-6">
-                    <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                <div className="fixed inset-0 z-50 md:bg-black md:bg-opacity-40 flex md:items-center md:justify-center px-0 md:px-4 py-0 md:py-6 bg-white">
+                    <div className="bg-white rounded-none md:rounded-2xl shadow-2xl w-full h-full md:w-full md:h-auto md:max-w-3xl md:max-h-[90vh] overflow-hidden flex flex-col">
                         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
                             <h3 className="text-xl font-semibold text-gray-900">
                                 {detailListing?.type === 'sale' ? '商品详情' : '帖子详情'}

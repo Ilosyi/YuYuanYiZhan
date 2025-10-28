@@ -150,7 +150,7 @@ const InfoCard = ({
             onClick={() => onOpenDetail(item)}
             className="bg-white rounded-xl shadow hover:shadow-lg transition-shadow duration-200 cursor-pointer overflow-hidden"
         >
-            <div className="relative h-44 bg-gray-100 overflow-hidden">
+            <div className="relative h-32 sm:h-36 md:h-44 bg-gray-100 overflow-hidden">
                 <img
                     src={imageUrl}
                     alt={item.title}
@@ -164,14 +164,14 @@ const InfoCard = ({
                     <span className="absolute bottom-2 right-2 px-2 py-0.5 text-xs bg-black/60 text-white rounded-full">多图</span>
                 )}
             </div>
-            <div className="p-4 space-y-3">
+            <div className="p-3 sm:p-4 space-y-2 sm:space-y-3">
                 <div className="flex items-start justify-between gap-2">
-                    <h3 className="text-lg font-semibold text-gray-900 line-clamp-2">{item.title}</h3>
+                    <h3 className="text-base sm:text-lg font-semibold text-gray-900 line-clamp-2">{item.title}</h3>
                     <span className={`px-2 py-1 text-xs font-semibold rounded-full whitespace-nowrap ${badgeStyle}`}>
                         {badgeText || '其他'}
                     </span>
                 </div>
-                <p className="text-sm text-gray-600 line-clamp-3">{item.description || item.content}</p>
+                <p className="text-sm text-gray-600 line-clamp-2 sm:line-clamp-3">{item.description || item.content}</p>
                 <div className="flex items-center justify-between text-xs text-gray-400">
                     <span>发布者：{item.user_name || item.owner_name}</span>
                     <span>{formatDateTime(item.created_at)}</span>
@@ -713,7 +713,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
 
         if (activeMode === 'sale' || activeMode === 'acquire') {
             return (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3 md:gap-6">
                     {listings.map(item => (
                         <ListingCard
                             key={item.id}
@@ -732,7 +732,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
 
         const isLostFound = activeMode === 'lostfound';
         return (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-3 gap-3 md:gap-5">
                 {listings.map(item => (
                     <InfoCard
                         key={item.id}
@@ -913,8 +913,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
             {renderContent()}
 
             {isDetailOpen && (
-                <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center px-4 py-6 z-50">
-                    <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                <div className="fixed inset-0 z-50 md:bg-black md:bg-opacity-40 flex md:items-center md:justify-center px-0 md:px-4 py-0 md:py-6 bg-white">
+                    <div className="bg-white rounded-none md:rounded-2xl shadow-xl w-full h-full md:w-full md:h-auto md:max-w-3xl md:max-h-[90vh] overflow-hidden flex flex-col">
                         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
                             <h3 className="text-xl font-semibold text-gray-900">
                                 {detailListing?.type === 'sale' ? '商品详情' : '帖子详情'}

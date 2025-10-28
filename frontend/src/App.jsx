@@ -14,7 +14,7 @@ import PostModal from './components/PostModal';
 import { ConfirmProvider } from './context/ConfirmContext';
 import { ToastProvider } from './context/ToastContext';
 
-// Header 组件，现在包含用户信息和登出按钮
+// Header 组件：右上角保留“发布/登出”，顶部导航在桌面显示
 const Header = ({ activeNav, setActiveNav, onPostNewClick }) => {
     const { user, logout } = useAuth();
     
@@ -28,7 +28,7 @@ const Header = ({ activeNav, setActiveNav, onPostNewClick }) => {
     };
 
     return (
-        <header className="bg-indigo-700 text-white shadow-lg sticky top-0 z-50">
+        <header className="bg-indigo-700 text-white shadow-lg sticky top-0 z-50 header-safe">
             <div className="container mx-auto px-4">
                 <div className="flex justify-between items-center h-16">
                     <div className="text-2xl font-bold cursor-pointer" onClick={() => setActiveNav('home')}>喻园易站</div>
@@ -65,6 +65,33 @@ const Header = ({ activeNav, setActiveNav, onPostNewClick }) => {
     );
 };
 
+// Bottom Tab Bar：移动端显示
+const BottomTabBar = ({ activeNav, setActiveNav }) => {
+    const tabs = [
+        { key: 'home', label: '首页' },
+        { key: 'myOrders', label: '我的订单' },
+        { key: 'myListings', label: '我的发布' },
+        { key: 'messages', label: '消息' },
+        { key: 'userCenter', label: '我的' },
+    ];
+    return (
+        <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-gray-200 footer-safe">
+            <div className="grid grid-cols-5">
+                {tabs.map(t => (
+                    <button
+                        key={t.key}
+                        onClick={() => setActiveNav(t.key)}
+                        className={`flex flex-col items-center justify-center py-2 text-xs ${activeNav === t.key ? 'text-indigo-600' : 'text-gray-600'}`}
+                        type="button"
+                    >
+                        <span className={`h-1 w-6 rounded-full mb-1 ${activeNav === t.key ? 'bg-indigo-600' : 'bg-transparent'}`}></span>
+                        <span>{t.label}</span>
+                    </button>
+                ))}
+            </div>
+        </nav>
+    );
+};
 
 function MainApp() {
     const { user, isLoading } = useAuth();
@@ -121,9 +148,10 @@ function MainApp() {
     return (
         <div className="min-h-screen bg-gray-100 font-sans">
             <Header activeNav={activeNav} setActiveNav={setActiveNav} onPostNewClick={() => handleOpenModal(null)} />
-            <main className="container mx-auto p-4 md:p-6">
+            <main className="container mx-auto p-4 md:p-6 pb-24 md:pb-6">
                 {renderContent()}
             </main>
+            <BottomTabBar activeNav={activeNav} setActiveNav={setActiveNav} />
             <PostModal 
                 isOpen={isModalOpen}
                 onClose={handleCloseModal}
