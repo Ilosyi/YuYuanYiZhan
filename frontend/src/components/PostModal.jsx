@@ -3,7 +3,15 @@ import api, { resolveAssetUrl } from '../api';
 import { getModuleTheme } from '../constants/moduleThemes';
 import { useToast } from '../context/ToastContext';
 
-// 地点选项常量
+// 发布/编辑内容的统一弹窗
+// 支持五种类型：出售(sale)、收购(acquire)、跑腿(errand: service/lecture)、帮帮忙(help)、失物招领(lostfound)
+// 关键点：
+// - 根据类型和分类动态展示/校验表单字段
+// - 编辑模式需加载详情并把后端字段(下划线)映射到前端状态(驼峰)
+// - 图片多选与预览（最多 10 张），编辑时可保留已有图片 ID
+// - 提交使用 multipart/form-data（包含图片与文本字段）
+
+// 地点选项常量（跑腿-服务使用）
 const LOCATION_OPTIONS = [
     { value: 'qinyuan', label: '沁苑' },
     { value: 'yunyuan', label: '韵苑' },
@@ -21,7 +29,7 @@ const LOCATION_OPTIONS = [
     { value: 'other', label: '其他 (请自填)' }
 ];
 
-// 讲座地点预设
+// 讲座地点预设（跑腿-代课讲座使用）
 const LECTURE_LOCATION_OPTIONS = [
     { value: '东九楼', label: '东九楼' },
     { value: '东十二楼', label: '东十二楼' },
@@ -30,7 +38,7 @@ const LECTURE_LOCATION_OPTIONS = [
     { value: 'other', label: '其他 (请自填)' },
 ];
 
-// 图书教材类型（存储与展示均使用中文，便于筛选与直观显示）
+// 图书教材类型（与后端存储一致，便于筛选与直观显示）
 const BOOK_TYPE_OPTIONS = [
     { value: '课内教材', label: '课内教材' },
     { value: '课外教材', label: '课外教材' },
@@ -38,6 +46,7 @@ const BOOK_TYPE_OPTIONS = [
     { value: '其他', label: '其他' },
 ];
 
+// 顶部“类型/分类”选择器的候选项
 const CATEGORY_OPTIONS = {
     sale: [
         { value: 'electronics', label: '电子产品' },
@@ -84,6 +93,7 @@ const CATEGORY_OPTIONS = {
     },
 };
 
+// 不同类型的默认分类
 const getDefaultCategory = (type) => {
     if (type === 'lostfound') {
         // 失物招领默认值格式: "类型_物品"，默认为寻物_其他
@@ -109,7 +119,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             lostFoundItem = item || 'other';
         }
         
-        // 4. 修改 getInitialState 函数，移除不必要的自定义地点字段
+        // 初始表单状态（编辑模式尽量从 editingItem 填充）
         return {
             type: initialType,
             title: editingItem?.title || '',
@@ -148,6 +158,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     const MAX_IMAGE_COUNT = 10;
     const toast = useToast();
 
+    // 释放图片预览的 URL 对象，避免内存泄漏
     const resetNewImages = useCallback(() => {
         setNewImages(prev => {
             prev.forEach(item => {
@@ -159,7 +170,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         });
     }, []);
 
-    // 当编辑项变化时 (打开/切换模态框)，重置表单并加载已有图片
+    // 当编辑项变化时 (打开/切换模态框)，重置表单并「按需加载详情」以同步最新图片与字段
     useEffect(() => {
         let cancelled = false;
 
@@ -188,7 +199,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         setExistingImages([]);
                         return;
                     }
-                    // 加载图片信息...
+                    // 加载图片信息...（此处已有图片列表由父组件/后端返回格式决定）
                     
                     // 添加地点信息的映射 - 下划线命名法转驼峰命名法
                     setFormData(prev => ({
@@ -234,7 +245,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         resetNewImages();
     }, [resetNewImages]);
 
-    // 修改表单字段更新函数，确保使用正确的字段名
+    // 表单字段更新：根据不同键值触发对应的重置/联动
     // 修改handleInputChange函数中类型变化时的重置逻辑
     const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -260,7 +271,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     return;
     }
     
-    // 其他代码保持不变
+    // 其他字段保持简单赋值；
     if ((name === 'lostFoundType' || name === 'lostFoundItem') && formData.type === 'lostfound') {
         // 当失物招领类型或物品变化时，更新category字段为"类型_物品"格式
         const type = name === 'lostFoundType' ? value : formData.lostFoundType || 'lost';
@@ -324,6 +335,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     setFormData(prev => ({ ...prev, [name]: value }));
     };
 
+    // 选择图片：限制数量、生成本地预览、清空 input.value 便于重复选择
     const handleImageChange = useCallback((event) => {
         const files = Array.from(event.target.files || []);
         if (!files.length) {
@@ -352,10 +364,12 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         event.target.value = '';
     }, [existingImages.length, newImages.length, MAX_IMAGE_COUNT]);
 
+    // 编辑模式：从「已有图片列表」移除（真正删除在提交时由后端根据 keepImageIds 处理）
     const handleRemoveExistingImage = useCallback((index) => {
         setExistingImages(prev => prev.filter((_, idx) => idx !== index));
     }, []);
 
+    // 本次新增：从「新选图片列表」移除，并释放预览 URL
     const handleRemoveNewImage = useCallback((index) => {
         setNewImages(prev => {
             const next = [...prev];
@@ -369,7 +383,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
 
     const totalImages = existingImages.length + newImages.length;
 
-    // 确保 handleSubmit 函数正确处理地点字段
+    // 提交：根据类型/分类把字段转换成后端约定（含文件）
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsLoading(true);
@@ -429,11 +443,13 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         }
 
         // 失物招领：可选丢失者学号
+        // 失物招领：可选丢失者学号（在后端用于通知潜在失主）
         if (formData.type === 'lostfound' && formData.lostStudentId && String(formData.lostStudentId).trim()) {
             submissionData.append('lost_student_id', String(formData.lostStudentId).trim());
         }
 
         // 代课讲座字段（仅当分类为 lecture 时）
+        // 代课讲座：仅当分类为 lecture 时提交对应字段
         if (formData.type === 'errand' && formData.category === 'lecture') {
             let lecLoc = formData.lectureLocation;
             if (lecLoc === 'other') {
@@ -488,10 +504,10 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
 
     if (!isOpen) return null;
 
-    // 根据类型决定是否显示价格字段
+    // UI 联动：根据类型决定是否显示价格字段
     const showPriceField = ['sale', 'acquire', 'errand'].includes(formData.type);
     
-    // 根据类型和分类决定是否显示地点字段
+    // UI 联动：仅在 跑腿-服务 时显示地点字段
     const showLocationFields = formData.type === 'errand' && formData.category === 'service';
 
     const theme = getModuleTheme(formData.type);
@@ -500,7 +516,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
-                {/* Header */}
+                {/* Header：根据类型切换主题色与标题 */}
                 <div className={`${theme.headerBg} ${theme.headerText} px-6 py-4 flex items-center justify-between`}>
                     <div className="flex items-center gap-2">
                         <span className="text-2xl leading-none">{theme.icon}</span>
@@ -509,9 +525,9 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                     <button type="button" onClick={onClose} className="text-white/80 hover:text-white text-xl leading-none">×</button>
                 </div>
 
-                {/* 修改表单容器，添加滚动功能 */}
+                {/* 表单主体：根据类型/分类动态展示字段 */}
                 <form onSubmit={handleSubmit} className="p-6 overflow-y-auto max-h-[calc(92vh-150px)]">
-                    {/* type / category quick pill */}
+                    {/* 顶部类型/分类选择器 */}
                     <div className="mb-5 flex flex-wrap items-center gap-2">
                         <span className={`px-2 py-1 text-xs rounded-full border ${theme.accentPill} ${theme.accentBorder}`}>类型</span>
                         <select name="type" value={formData.type} onChange={handleInputChange} className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}>
@@ -717,7 +733,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                             </div>
                         )}
 
-                        {/* 添加地点字段 */}
+                        {/* 跑腿-服务：起止地点（选择“其他”后出现自定义输入框） */}
                         {showLocationFields && (
                             <div className="space-y-4">
                                 <div>

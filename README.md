@@ -1,155 +1,129 @@
 # 喻园易站（YuYuanYiZhan）
 
-一个面向校园场景的综合服务平台，提供闲置交易、互助问答、失物招领等功能。项目采用前后端分离架构，后端基于 Node.js + Express + MySQL，前端基于 React + Vite + Tailwind CSS，通信使用 REST API 与 JWT 认证。
+面向校园场景的综合服务平台，支持闲置交易与跑腿/互助任务，内置消息私聊与邮箱验证码注册。架构为前后端分离：后端 Node.js + Express + MySQL，前端 React + Vite + Tailwind，API 采用 JWT 鉴权，消息使用 WebSocket。
 
-## 功能概览
+## 功能特性
 
-- 用户注册、登录、JWT 鉴权
-- 帖子（商品/求购）发布、更新、删除、图片上传
-- 列表查询（按类型、分类、关键字、状态、用户）
-- 订单创建与全流程状态流转（待支付 → 待发货 → 待收货 → 已完成/已取消）
-- 留言/回复功能
-- 私信聊天功能（支持实时 WebSocket 通信）
-- 用户个人中心（我的发布、我的订单、我的消息）
-- 支持多图片上传与评论点赞功能
+- 账号与安全
+   - 邮箱验证码注册（学号 → hust.edu.cn 邮箱），登录，JWT 鉴权
+   - 基础资料、关注（follow）、收藏（favorite）
+- 帖子与任务
+   - 帖子发布/编辑/删除，图片上传（Multer），列表筛选与搜索
+   - 跑腿/互助：接单、进度查看，发布者可确认完成；被接单后支持禁用编辑
+- 订单/我的
+   - 我的发布、我的订单（买家/卖家/跑腿）、我的消息
+- 消息与通知
+   - 私信聊天（WebSocket /ws，在线推送新消息与会话摘要）
 
-## 仓库结构
+## 目录结构
 
 ```
-backend/         # Node.js/Express 后端服务
-frontend/        # React + Vite 前端应用
+README.md
+backend/
+   package.json
+   server.js              # API、WebSocket、表结构初始化、图片上传、邮箱验证码
+   uploads/               # 图片上传目录（持久化）
+docs/
+   原型设计.md / 进度计划.md 等
+frontend/
+   package.json
+   vite.config.js / tailwind.config.js
+   src/
+      api/
+         index.js           # Axios 实例，自动附加 JWT
+      pages/
+         HomePage.jsx / LoginPage.jsx / RegisterPage.jsx
+         MyListingsPage.jsx / MyOrdersPage.jsx / MyMessagesPage.jsx
+      components/          # ListingCard / OrderCard / PostModal 等
+      context/
+         AuthContext.jsx    # 登录状态与令牌管理
 ```
-
-### 关键文件
-
-- `backend/server.js`：后端入口与所有路由实现
-- `backend/package.json`：后端依赖与脚本
-- `frontend/src/api/index.js`：Axios 实例，自动附加 JWT 到请求头
-- `frontend/package.json`：前端依赖与脚本
-- `frontend/src/pages/`：前端页面组件
-- `frontend/src/components/`：前端通用组件
 
 ## 技术栈
 
-- **后端**：Node.js, Express, MySQL (mysql2/promise), Multer（图片上传）, JSON Web Token, Bcrypt
-- **前端**：React 19, Vite 7, Axios, Tailwind CSS
-- **通信**：REST API, WebSocket
+- 后端：Node.js, Express, MySQL (mysql2/promise), Multer, JSON Web Token, Bcrypt, ws
+- 前端：React 18/19（见 package.json）、Vite、Axios、Tailwind CSS
+- 通信：REST + WebSocket（路径 /ws）
 
-## 环境要求
+## 快速开始（部署简述）
 
-- Node.js 18+（建议 LTS）
-- npm 9+ 或 pnpm/yarn（示例使用 npm）
-- MySQL 8.x（或兼容版本）
-- Tailwind 3.4.17
-- 操作系统：Windows/macOS/Linux 均可
+前置要求：Node.js 18+、MySQL 8.x、可用的 SMTP（可选，用于邮箱验证码）。
 
-## 如何部署与进一步开发
-
-### 部署步骤
-
-#### 后端部署
-
-1. 准备运行环境（Node.js 18+，MySQL 8+）。
-2. 设置 `.env` 文件（参考下方“环境变量”）。
-3. 安装依赖并启动服务：
+1) 后端
 
 ```bash
 cd backend
 npm ci
-node server.js  # 建议使用 PM2 等进程守护
+# 在 backend 目录创建 .env（见下方环境变量）
+node server.js   # 生产建议用 PM2 守护
 ```
 
-4. 配置反向代理（如 Nginx/Apache）将 `/api` 与 `/uploads` 转发到后端服务。
-5. 确保 `backend/uploads/` 目录持久化存储并定期备份。
-
-#### 前端部署
-
-1. 安装依赖并构建：
+2) 前端
 
 ```bash
 cd frontend
 npm ci
-npm run build
+npm run dev      # 开发
+# 或
+npm run build    # 生产构建，将 dist/ 交由 Nginx 等静态服务托管
 ```
 
-2. 将 `frontend/dist/` 部署到静态资源服务器（如 Nginx、Vercel、Netlify）。
-3. 如需与后端同域部署，可通过 Nginx 提供前端静态资源，并反向代理 API 请求。
+3) 反向代理（生产建议）
 
-### 开发指南
+- Nginx/Apache 提供前端静态资源，并反向代理：
+   - `/api` → 后端 Node 端口
+   - `/uploads` → 后端静态目录
+   - `/ws` → WebSocket（需开启升级与连接保持）
 
-1. 克隆仓库并安装依赖：
-
-```bash
-git clone <repository-url>
-cd YuYuanYiZhan
-npm install
-```
-
-2. 启动开发环境：
-
-```bash
-# 后端
-cd backend
-npm run dev
-
-# 前端（新开终端）
-cd frontend
-npm run dev
-```
-
-3. 代码位置：
-   - 页面：`frontend/src/pages/*`
-   - 组件：`frontend/src/components/*`
-   - 上下文/状态：`frontend/src/context/*`
-   - API：`frontend/src/api/index.js`
-   - 后端路由：`backend/server.js`
-
-4. 数据库初始化：
-   - 创建数据库与表（参考 `README.md` 中的 SQL 示例）。
-   - 确保 `.env` 文件配置正确。
-
-## 环境变量
-
-在 `backend/` 目录下创建 `.env` 文件：
+## 环境变量（backend/.env）
 
 ```env
+# 基础服务
 PORT=3000
 DB_HOST=127.0.0.1
 DB_USER=your_mysql_user
 DB_PASSWORD=your_mysql_password
 DB_NAME=yuyuan_yizhan
 JWT_SECRET=replace_with_a_strong_secret
-# 允许跨域的来源（可选，逗号分隔）；留空表示允许所有来源（调试方便）
+
+# 跨域
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-# 部署时是否直接由 Node 服务静态前端资源
+
+# 静态托管前端（可选）
 SERVE_FRONTEND=false
-# 当 SERVE_FRONTEND=true 时，指定前端构建目录（相对 backend/ 或绝对路径）
 FRONTEND_DIST_PATH=../frontend/dist
+
+# SMTP（可选，用于邮箱验证码注册）
+SMTP_ENABLED=true
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=your_smtp_user
+SMTP_PASS=your_smtp_app_password
+SMTP_FROM=Your Name <your_smtp_user@example.com>
 ```
 
-在 `frontend/` 目录下可以创建 `.env` 或 `.env.production` 设置前端 API 地址：
+前端可在 `frontend/.env` 或 `.env.production` 指定 API：
 
 ```env
-# 显式指定后端 API 基址（默认自动根据环境推断，可覆盖）
-VITE_API_BASE_URL=http://47.122.126.189
-# 开发时后端监听端口（未设置时默认为 3000）
+VITE_API_BASE_URL=http://localhost:3000
 VITE_DEV_API_PORT=3000
 ```
 
-## 未来开发方向
+## 注意事项与常见问题（简）
 
-- **好友功能**：支持用户关注与粉丝模块。
-- **高级搜索**：支持多条件组合查询与排序。
-- **个性化推荐**：支持主页个性化推荐商品
-- **多样分类**：支持按价格，距离等对商品排序。
-- **通知系统**：为订单状态变更、留言回复等提供实时通知。
-- **移动端适配**：优化 UI 以支持移动设备。
-- **性能优化**：
-  - 前端：按需加载组件与资源。
-  - 后端：增加缓存层（如 Redis）。
-- **测试覆盖率**：增加单元测试与集成测试，确保代码质量。
+- 云服务器发信失败：需在安全组放行 SMTP 端口（465/587），使用真实 SMTP 域名与授权码；查看后端日志 `request-email-code error:` 排查。
+- 图片上传：`backend/uploads/` 需持久化（挂载磁盘/共享存储）。
+- WebSocket 反代：确保代理对 `/ws` 开启 `Upgrade`/`Connection` 头的透传与超时设置。
 
----
+## 未来方向（摘）
 
+- 高级搜索与排序、个性化推荐
+- 通知中心（订单/消息变更）
+- 移动端适配与性能优化（前端按需加载、后端缓存）
+- 自动化测试与覆盖率提升
+
+
+```
 
 

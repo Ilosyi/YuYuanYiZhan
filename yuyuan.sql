@@ -55,7 +55,7 @@ CREATE TABLE `listing_images` (
   PRIMARY KEY (`id`),
   KEY `idx_listing_order` (`listing_id`,`sort_order`),
   CONSTRAINT `fk_listing_images_listing` FOREIGN KEY (`listing_id`) REFERENCES `listings` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -73,7 +73,7 @@ CREATE TABLE `listings` (
   `category` varchar(50) NOT NULL,
   `user_id` int NOT NULL COMMENT '发布者用户ID (外键)',
   `user_name` varchar(255) NOT NULL COMMENT '发布者昵称',
-  `type` enum('sale','acquire','help','lostfound') NOT NULL,
+  `type` enum('sale','acquire','help','lostfound','errand') NOT NULL DEFAULT 'sale',
   `status` enum('available','in_progress','completed') NOT NULL DEFAULT 'available',
   `image_url` varchar(255) DEFAULT NULL,
   `start_location` varchar(255) DEFAULT NULL,
@@ -82,10 +82,24 @@ CREATE TABLE `listings` (
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `book_type` varchar(50) DEFAULT NULL,
   `book_major` varchar(100) DEFAULT NULL,
+  `lecture_location` varchar(100) DEFAULT NULL,
+  `lecture_start_at` datetime DEFAULT NULL,
+  `lecture_end_at` datetime DEFAULT NULL,
+  `lost_student_id` varchar(16) DEFAULT NULL,
+  `errand_paid` tinyint(1) NOT NULL DEFAULT '0',
+  `errand_paid_at` datetime DEFAULT NULL,
+  `errand_runner_id` int DEFAULT NULL,
+  `errand_accept_at` datetime DEFAULT NULL,
+  `errand_completion_image_url` varchar(500) DEFAULT NULL,
+  `errand_completion_note` text,
+  `errand_completion_at` datetime DEFAULT NULL,
+  `errand_payment_released_at` datetime DEFAULT NULL,
+  `errand_private_note` text,
   PRIMARY KEY (`id`),
   KEY `user_id` (`user_id`),
+  KEY `idx_errand_runner` (`errand_runner_id`),
   CONSTRAINT `listings_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=22 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='主帖子信息表';
+) ENGINE=InnoDB AUTO_INCREMENT=28 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='主帖子信息表';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -111,7 +125,7 @@ CREATE TABLE `messages` (
   CONSTRAINT `fk_messages_listing` FOREIGN KEY (`listing_id`) REFERENCES `listings` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_messages_receiver` FOREIGN KEY (`receiver_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_messages_sender` FOREIGN KEY (`sender_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -154,12 +168,14 @@ CREATE TABLE `replies` (
   `user_name` varchar(255) NOT NULL,
   `content` text NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `parent_reply_id` int DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `listing_id` (`listing_id`),
   KEY `user_id` (`user_id`),
+  KEY `idx_replies_parent` (`parent_reply_id`),
   CONSTRAINT `replies_ibfk_1` FOREIGN KEY (`listing_id`) REFERENCES `listings` (`id`) ON DELETE CASCADE,
   CONSTRAINT `replies_ibfk_2` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='公共回复表';
+) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='公共回复表';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -180,7 +196,7 @@ CREATE TABLE `user_favorites` (
   KEY `idx_listing` (`listing_id`),
   CONSTRAINT `fk_user_favorites_listing` FOREIGN KEY (`listing_id`) REFERENCES `listings` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_user_favorites_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -250,4 +266,4 @@ CREATE TABLE `users` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2025-10-28 14:40:22
+-- Dump completed on 2025-10-29 20:25:39

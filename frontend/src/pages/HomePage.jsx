@@ -1,4 +1,5 @@
 // frontend/src/pages/HomePage.jsx
+// 主页：聚合展示 5 大模块（出售/收购/跑腿/帮帮忙/失物招领），提供搜索与多维筛选、详情弹窗、收藏、沟通与下单/接单等操作
 // 版本: 1.1 - 实现动态分类筛选 + 主页主题化细节
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api, { resolveAssetUrl } from '../api';
@@ -9,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useConfirm } from '../context/ConfirmContext';
 
+// 顶部分类筛选配置（不同模块的分类选项）
 const CATEGORY_CONFIG = {
     sale: {
         all: '所有分类',
@@ -51,7 +53,7 @@ const CATEGORY_CONFIG = {
     },
 };
 
-// 失物招领物品分类配置（同时兼容旧数据的键名）
+// 失物招领物品分类配置（渲染卡片角标时的人类友好名称；兼容旧数据键名）
 const LOSTFOUND_ITEM_CONFIG = {
     campusIdCard: '校园卡',
     campuscard: '校园卡',
@@ -62,7 +64,7 @@ const LOSTFOUND_ITEM_CONFIG = {
     other: '其他',
 };
 
-// 失物招领筛选项（使用与表单一致的值）
+// 失物招领筛选项（筛选器使用与发布表单一致的值）
 const LOSTFOUND_ITEM_TYPE_CONFIG = {
     all: '所有物品',
     campusIdCard: '校园卡',
@@ -72,6 +74,7 @@ const LOSTFOUND_ITEM_TYPE_CONFIG = {
     other: '其他'
 };
 
+// 模块中文名称
 const MODE_TEXT = {
     sale: '出售',
     acquire: '收购',
@@ -81,6 +84,7 @@ const MODE_TEXT = {
 };
 
 // 图书教材类型筛选（与后端存储一致，使用中文值）
+// 图书教材类型筛选（与后端存储一致，便于过滤）
 const BOOK_TYPE_CONFIG = {
     all: '所有类型',
     '课内教材': '课内教材',
@@ -98,6 +102,7 @@ const formatDateTime = (value) => {
     }
 };
 
+// 统一推导列表项的“展示类型”键（用于默认图与主题）
 const deriveListingTypeKey = (item, mode) => {
     if (!item && mode) return mode || 'sale';
     if (mode === 'lostfound' || item?.type === 'lost' || item?.type === 'found') {
@@ -106,6 +111,7 @@ const deriveListingTypeKey = (item, mode) => {
     return item?.type || mode || 'sale';
 };
 
+// 兜底的图片 URL（后端未提供或 404 时给出默认图）
 const resolveImageUrl = (value, listingType) => {
     const resolved = resolveAssetUrl(value);
     if (resolved) {
@@ -114,6 +120,7 @@ const resolveImageUrl = (value, listingType) => {
     return getDefaultListingImage(listingType) || FALLBACK_IMAGE;
 };
 
+// 列表卡片（帮帮忙/失物招领使用；出售/收购/跑腿由 ListingCard 专用组件处理）
 const InfoCard = ({
     item,
     onOpenDetail,
@@ -124,6 +131,7 @@ const InfoCard = ({
     mode,
     theme,
 }) => {
+    // 卡片角标：
     let badgeText = '';
     let badgeStyle = 'bg-indigo-100 text-indigo-700';
     
@@ -234,6 +242,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [category, setCategory] = useState('all');
 
+    // 详情弹窗
     const [isDetailOpen, setIsDetailOpen] = useState(false);
     const [detailListing, setDetailListing] = useState(null);
     const [detailReplies, setDetailReplies] = useState([]); // 数组：[{ id, user_name, content, created_at, children: [] }]
@@ -256,12 +265,14 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const [itemType, setItemType] = useState('all');
     
     // 在模式切换的useEffect中重置物品类型筛选
+    // 切换模块时重置筛选，避免残留参数影响请求
     useEffect(() => {
     setCategory('all');
     setItemType('all'); // 重置物品类型筛选
     setSearchTerm('');
     }, [activeMode]);
 
+    // 读取“我的收藏”ID 集用于卡片按钮显示
     const refreshFavoriteIds = useCallback(async () => {
         if (!user) {
             setFavoriteIds(() => new Set());
@@ -281,6 +292,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         refreshFavoriteIds();
     }, [refreshFavoriteIds]);
 
+    // 从 localStorage 读取待展示的详情（来自其他页面的导航）
     useEffect(() => {
         try {
             const stored = window.localStorage.getItem('yy_pending_listing_detail');
@@ -300,6 +312,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
     }, []);
 
     // 在LOSTFOUND_ITEM_TYPE_CONFIG之后添加地点配置
+    // 跑腿-服务：地点筛选字典
     const LOCATION_CONFIG = {
     all: '所有地点',
     qinyuan: '沁苑',
@@ -329,7 +342,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const [lectureStartFrom, setLectureStartFrom] = useState('');
     const [lectureEndTo, setLectureEndTo] = useState('');
     
-    // 在模式切换的useEffect中重置地点筛选状态
+    // 在模式切换时重置地点/图书/讲座筛选状态
     useEffect(() => {
     setCategory('all');
     setItemType('all'); // 重置物品类型筛选
@@ -344,7 +357,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
     setSearchTerm('');
     }, [activeMode]);
 
-    // 分类切换时对图书筛选进行复位
+    // 分类切换时对图书/讲座筛选进行复位
     useEffect(() => {
         if (category !== 'books') {
             setBookType('all');
@@ -358,8 +371,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     }, [category]);
     
-    // 修改fetchListings函数，添加地点筛选参数
-    // 确保fetchListings函数中的参数名称正确
+    // 拉取列表：拼接查询参数（仅在对应模块/分类下才传入）
     const fetchListings = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -421,6 +433,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         </>
     )}
 
+    // 简单防抖：输入/切换筛选 250ms 后再请求
     useEffect(() => {
         const timer = setTimeout(fetchListings, 250);
         return () => clearTimeout(timer);
@@ -438,6 +451,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
 
     const confirm = useConfirm();
     const toast = useToast();
+    // 出售：弹出确认并创建订单
     const handlePurchase = async (item) => {
         if (!user) {
             toast.info('请先登录再进行购买。');
@@ -464,6 +478,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 跑腿接单：创建接单记录，并刷新详情/列表
     const handleAcceptErrand = async (item) => {
         if (!user) {
             toast.info('请先登录再接单。');
@@ -495,6 +510,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 跑腿接单人：上传完成凭证（图片+可选备注）
     const handleUploadProof = async () => {
         if (!detailListing) return;
         if (!proofFile) {
@@ -528,6 +544,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 发单人：确认完成并模拟发放酬劳
     const handleConfirmErrand = async () => {
         if (!detailListing) return;
         let ok = true;
@@ -557,6 +574,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 收藏/取消收藏：乐观更新集合
     const handleToggleFavorite = async (item, shouldFavorite) => {
         if (!user) {
             toast.info('请先登录后再收藏。');
@@ -585,6 +603,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 联系对方：根据场景（跑腿/非跑腿、是否本人/接单人）决定可沟通对象
+    // 通过 localStorage 写入“待打开的会话信息”，页面跳转到消息中心后读取
     const handleContact = (item) => {
         if (!user) {
             toast.info('请先登录后再联系对方。');
@@ -653,6 +673,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         onNavigate('messages');
     };
 
+    // 把平铺的回复按 parent_reply_id 组织成二级树
     const normalizeReplies = (rows) => {
         if (!Array.isArray(rows)) return [];
         // 若已经是树结构（有 children），直接返回
@@ -672,6 +693,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         return roots;
     };
 
+    // 详情：帖子内容 + 图片 + 回复
     const loadDetail = async (listingId) => {
         setDetailLoading(true);
         setDetailError('');
@@ -688,6 +710,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 打开详情：校验权限（跑腿仅发单者/接单者可见隐私信息）并预清理状态
     const openDetail = (item) => {
         const isErrand = item.type === 'errand' || (item.type === 'acquire' && item.category === 'service');
         const viewerId = user?.id;
@@ -717,6 +740,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         loadDetail(item.id);
     };
 
+    // 关闭详情：释放预览 URL、防止内存泄漏
     const closeDetail = () => {
         setIsDetailOpen(false);
         setDetailListing(null);
@@ -756,15 +780,18 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 统计总回复条数（一级 + 子级）
     const totalRepliesCount = useMemo(() => {
         const countTree = (nodes) => nodes.reduce((acc, n) => acc + 1 + (Array.isArray(n.children) ? n.children.length : 0), 0);
         return countTree(detailReplies);
     }, [detailReplies]);
 
+    // 在详情页开始「回复某人」
     const handleStartReply = (rootId, targetName) => {
         setReplyingTo({ parentReplyId: rootId, targetName });
     };
 
+    // 开始编辑某条回复
     const handleStartEdit = (reply) => {
         setEditingReplyId(reply.id);
         setEditingContent(reply.content || '');
@@ -775,6 +802,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         setEditingContent('');
     };
 
+    // 保存编辑后的回复
     const handleSaveEdit = async () => {
         if (!editingReplyId) return;
         const content = (editingContent || '').trim();
@@ -792,6 +820,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 删除回复：二级子回复一并删除（后端事务处理）
     const handleDeleteReply = async (replyId) => {
         let ok = false;
         try {
@@ -809,6 +838,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    // 渲染 @提及 的高亮
     const renderWithMentions = (text) => {
         const s = String(text || '');
         const parts = s.split(/(@[A-Za-z0-9_]+)/g);
@@ -822,6 +852,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
         });
     };
 
+    // 详情图片列表：优先使用 images 数组，否则回退到主图
     const galleryImages = useMemo(() => {
         if (!detailListing) return [];
         const listingTypeKey = deriveListingTypeKey(detailListing, detailListing?.type || activeMode);
@@ -840,17 +871,20 @@ const HomePage = ({ onNavigate = () => {} }) => {
         return [];
     }, [detailListing, activeMode]);
 
+    // 详情默认图类型
     const detailImageFallbackType = useMemo(() => {
         if (!detailListing) return deriveListingTypeKey(null, activeMode);
         return deriveListingTypeKey(detailListing, detailListing?.type || activeMode);
     }, [detailListing, activeMode]);
 
+    // 详情页头部的类型名称
     const detailModeLabel = useMemo(() => {
         if (!detailListing) return '';
         const key = deriveListingTypeKey(detailListing, detailListing?.type || activeMode);
         return MODE_TEXT[key] || detailListing.type || key;
     }, [detailListing, activeMode]);
 
+    // 跑腿详情判断 + 权限角色
     const isErrandDetail = detailListing && (detailListing.type === 'errand' || (detailListing.type === 'acquire' && detailListing.category === 'service'));
     const isErrandOwner = isErrandDetail && user?.id === detailListing?.user_id;
     const isErrandRunner = isErrandDetail && user?.id === detailListing?.errand_runner_id;
@@ -867,6 +901,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
 
     const currentCategories = CATEGORY_CONFIG[activeMode] || CATEGORY_CONFIG.sale;
 
+    // 主体内容：按模块渲染不同卡片
     const renderContent = () => {
         if (isLoading) {
             return <p className="text-center text-gray-500 py-10">加载中...</p>;

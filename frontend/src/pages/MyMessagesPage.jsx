@@ -4,6 +4,12 @@ import { useAuth } from '../context/AuthContext';
 import { useConfirm } from '../context/ConfirmContext';
 import { useToast } from '../context/ToastContext';
 
+// 消息中心：
+// - 左侧会话列表，右侧聊天窗口
+// - 与后端 WebSocket(/ws) 建立长连接，发送/接收消息
+// - 支持展示与当前会话相关的帖子摘要（用于快速下单/模板回复）
+
+// 小工具：时间格式化（同一天显示时分，否则显示月日）
 const formatTime = (value) => {
     if (!value) return '';
     try {
@@ -21,18 +27,21 @@ const formatTime = (value) => {
     }
 };
 
+// 拼接 WS 地址：根据 API_BASE_URL 推导 ws/wss 协议
 const buildWebSocketUrl = (token) => {
     const base = new URL(API_BASE_URL);
     const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${base.host}/ws?token=${token}`;
 };
 
+// 统一资源 URL（空值返回 null，方便条件渲染）
 const resolveImageUrl = (value) => {
     if (!value) return null;
     const resolved = resolveAssetUrl(value);
     return resolved || null;
 };
 
+// 顶部帖子摘要：仅在 sale/acquire 两类对话中展示快捷操作
 const ListingPreview = ({ listing, onAction, isProcessing }) => {
     if (!listing || !['sale', 'acquire'].includes(listing.type)) {
         return null;
@@ -74,6 +83,7 @@ const ListingPreview = ({ listing, onAction, isProcessing }) => {
     );
 };
 
+// 单条消息气泡
 const ChatBubble = ({ message, isOwn }) => (
     <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2`}>
         <div className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm shadow-sm ${
@@ -87,6 +97,7 @@ const ChatBubble = ({ message, isOwn }) => (
     </div>
 );
 
+// 左侧会话条目
 const ConversationItem = ({ conversation, isActive, onSelect }) => (
     <button
         onClick={onSelect}
@@ -111,6 +122,7 @@ const ConversationItem = ({ conversation, isActive, onSelect }) => (
 
 const MyMessagesPage = () => {
     const { user } = useAuth();
+    // 会话/消息/输入/连接等状态
     const [conversations, setConversations] = useState([]);
     const [conversationsLoading, setConversationsLoading] = useState(false);
     const [conversationsReady, setConversationsReady] = useState(false);
@@ -128,9 +140,11 @@ const MyMessagesPage = () => {
     const selectedConversationRef = useRef(null);
     const listingCacheRef = useRef(new Map());
 
+    // 从 localStorage 读取 token（仅在初次渲染计算）
     const token = useMemo(() => (typeof window === 'undefined' ? null : localStorage.getItem('accessToken')), []);
     const userId = user?.id;
 
+    // 维护“会话关联的帖子摘要”：避免重复请求，按对端用户 ID 索引
     const upsertConversationMeta = useCallback((otherUserId, listing) => {
         if (!otherUserId || !listing) return;
         setConversationMeta(prev => {
@@ -146,6 +160,7 @@ const MyMessagesPage = () => {
         });
     }, []);
 
+    // 延迟加载：根据 listingId 获取帖子概览（标题/图片/价格）并缓存至 Map
     const loadListingSnapshot = useCallback(async (listingId) => {
         if (!listingId) return null;
         const cache = listingCacheRef.current;
@@ -177,6 +192,7 @@ const MyMessagesPage = () => {
         }
     }, []);
 
+    // 滚动到底部（新消息可见）
     const scrollToBottom = () => {
         if (messagesEndRef.current) {
             messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -198,6 +214,7 @@ const MyMessagesPage = () => {
         scrollToBottom();
     }, [messages]);
 
+    // 拉取会话列表，并确保“当前选中会话”不被丢失（必要时插入占位）
     const fetchConversations = useCallback(async () => {
         setConversationsLoading(true);
         try {
@@ -225,6 +242,7 @@ const MyMessagesPage = () => {
         }
     }, []);
 
+    // 拉取某个会话的消息记录，并尝试推导与之关联的帖子摘要
     const fetchMessages = useCallback(async (otherUserId, username, options = {}) => {
         setMessagesLoading(true);
         const { listingHint = null } = options;
@@ -278,6 +296,7 @@ const MyMessagesPage = () => {
         fetchConversations();
     }, [fetchConversations, userId]);
 
+    // 建立 WebSocket 连接：接收 message 与 conversation:update 推送
     useEffect(() => {
         if (!token || !userId) return;
         const wsUrl = buildWebSocketUrl(token);
@@ -304,6 +323,7 @@ const MyMessagesPage = () => {
                     case 'message': {
                         const msg = payload.data;
                         if (!msg) return;
+                        // 计算此消息对应的“对端用户 ID”，统一用于会话列表定位
                         const conversationUserId = msg.senderId === userId ? msg.receiverId : msg.senderId;
                         const listingId = msg.listingId || msg.listing_id;
                         const activeConversation = selectedConversationRef.current;
@@ -322,6 +342,7 @@ const MyMessagesPage = () => {
                                     : msg.receiverId === userId
                                         ? 1
                                         : 0;
+                            // 更新/新建会话摘要，并把最新会话顶上（置顶）
                             const updatedConversation = existing
                                 ? {
                                       ...existing,
@@ -353,6 +374,7 @@ const MyMessagesPage = () => {
                     case 'conversation:update': {
                         const summary = payload.data;
                         if (!summary) return;
+                        // 后端推送的会话“未读数/最后消息”更新
                         setConversations(prev => {
                             const filtered = prev.filter(item => item.otherUserId !== summary.otherUserId);
                             return [summary, ...filtered];
@@ -378,6 +400,7 @@ const MyMessagesPage = () => {
         };
     }, [token, userId, loadListingSnapshot, upsertConversationMeta]);
 
+    // 从 localStorage 读取“待发起的会话”（来源于首页“联系对方”操作）
     useEffect(() => {
         if (pendingConversationHandled.current) return;
         if (!conversationsReady) return;
@@ -449,6 +472,9 @@ const MyMessagesPage = () => {
 
     const confirm = useConfirm();
     const toast = useToast();
+    // 帖子快捷操作：
+    // - sale：弹框确认并下单
+    // - acquire：写入一条模板消息到输入框
     const handleListingAction = async () => {
         if (actionLoading) return;
         if (!activeListing) return;
@@ -484,6 +510,7 @@ const MyMessagesPage = () => {
         }
     };
 
+    // 发送消息：校验连接状态与输入内容
     const handleSendMessage = () => {
         if (!selectedConversation) return;
         const text = inputValue.trim();
@@ -503,6 +530,7 @@ const MyMessagesPage = () => {
         setInputValue('');
     };
 
+    // Enter 发送，Shift+Enter 换行
     const handleKeyDown = (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
