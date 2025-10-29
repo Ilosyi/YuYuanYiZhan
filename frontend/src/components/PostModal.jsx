@@ -44,10 +44,8 @@ const CATEGORY_OPTIONS = {
         { value: 'books', label: '图书教材' },
         { value: 'beauty', label: '美妆护肤' },
         { value: 'stationery', label: '文具' },
-        { value: 'lecture', label: '代课讲座' },
         { value: 'clothing', label: '服饰鞋包' },
         { value: 'life', label: '生活用品' },
-        { value: 'service', label: '跑腿服务' },
         { value: 'others', label: '其他' },
     ],
     acquire: [
@@ -55,11 +53,14 @@ const CATEGORY_OPTIONS = {
         { value: 'books', label: '图书教材' },
         { value: 'beauty', label: '美妆护肤' },
         { value: 'stationery', label: '文具' },
-        { value: 'lecture', label: '代课讲座' },
         { value: 'clothing', label: '服饰鞋包' },
         { value: 'life', label: '生活用品' },
-        { value: 'service', label: '跑腿服务' },
         { value: 'others', label: '其他' },
+    ],
+    errand: [
+        { value: 'service', label: '校园跑腿' },
+        { value: 'lecture', label: '代课讲座' },
+        { value: 'others', label: '其他代办' },
     ],
     help: [
         { value: 'study', label: '学习求助' },
@@ -122,6 +123,9 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             // 只保留必要的地点字段
             startLocation: editingItem?.start_location || '',
             endLocation: editingItem?.end_location || '',
+            customStartLocation: '',
+            customEndLocation: '',
+            errandPrivateNote: editingItem?.errand_private_note || '',
             // 图书教材细分字段（仅在分类为“图书教材”时生效）
             bookType: editingItem?.book_type || '',
             bookMajor: editingItem?.book_major || '',
@@ -202,7 +206,8 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         lectureEndAt: listing.lecture_end_at ? String(listing.lecture_end_at).replace(' ', 'T').slice(0,16) : '',
                         // 如果地点是自定义地点，需要设置相应的字段
                         customStartLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.start_location) ? '' : listing.start_location || '',
-                        customEndLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.end_location) ? '' : listing.end_location || ''
+                        customEndLocation: ['qinyuan', 'yunyuan', 'zisong'].includes(listing.end_location) ? '' : listing.end_location || '',
+                        errandPrivateNote: listing.errand_private_note || ''
                     }));
                 })
                 .catch((err) => {
@@ -246,6 +251,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     // 简化地点字段重置
     startLocation: '',
     endLocation: '',
+    errandPrivateNote: '',
     // 切换类型时重置图书字段
     bookType: '',
     bookMajor: ''
@@ -276,26 +282,40 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                 ...prev,
                 category: value,
                 // 使用正确的驼峰命名
-                ...(!['service'].includes(value) && {
+                startLocation: '',
+                endLocation: ''
+            }));
+        } else if (formData.type === 'errand') {
+            setFormData(prev => ({
+                ...prev,
+                category: value,
+                ...(value !== 'service' ? {
                     startLocation: '',
-                    endLocation: ''
-                })
+                    endLocation: '',
+                    customStartLocation: '',
+                    customEndLocation: ''
+                } : {}),
+                ...(value !== 'lecture' ? {
+                    lectureLocation: '',
+                    lectureStartAt: '',
+                    lectureEndAt: '',
+                    customLectureLocation: ''
+                } : {})
             }));
         } else {
             setFormData(prev => ({
                 ...prev,
                 category: value,
-                // 非跑腿服务分类时重置地点信息
-                ...(!['service'].includes(value) && {
-                    startLocation: '',
-                    endLocation: '',
-                    customStartLocation: '',
-                    customEndLocation: ''
-                }),
                 // 非图书分类时清空图书字段
                 ...(value !== 'books' ? { bookType: '', bookMajor: '' } : {}),
-                // 非代课讲座分类时清空讲座字段
-                ...(value !== 'lecture' ? { lectureLocation: '', lectureStartAt: '', lectureEndAt: '', customLectureLocation: '' } : {})
+                startLocation: '',
+                endLocation: '',
+                customStartLocation: '',
+                customEndLocation: '',
+                lectureLocation: '',
+                lectureStartAt: '',
+                lectureEndAt: '',
+                customLectureLocation: ''
             }));
         }
         return;
@@ -354,6 +374,17 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         e.preventDefault();
         setIsLoading(true);
         setError('');
+        const isErrandOrder = formData.type === 'errand';
+        if (isErrandOrder) {
+            const reward = Number(formData.price);
+            if (!Number.isFinite(reward) || reward <= 0) {
+                setIsLoading(false);
+                const message = '跑腿代办需设置大于 0 的酬劳。';
+                setError(message);
+                toast.error(message);
+                return;
+            }
+        }
         
         // 使用 FormData 来发送包含文件的表单
         const submissionData = new FormData();
@@ -366,8 +397,11 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             if (key === 'start_location' || key === 'end_location') {
                 return;
             }
+            if (['customStartLocation', 'customEndLocation', 'customLectureLocation'].includes(key)) {
+                return;
+            }
         
-            if (key === 'price' && !(formData.type === 'sale' || formData.type === 'acquire')) {
+            if (key === 'price' && !['sale', 'acquire', 'errand'].includes(formData.type)) {
                 return; // 非交易类帖子不需要价格
             }
             
@@ -377,19 +411,21 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         
         // 添加地点字段的映射 - 驼峰命名法转下划线命名法
         // 将“其他”替换为自定义输入值
-        let startLoc = formData.startLocation;
-        if (startLoc === 'other') {
-            startLoc = (formData.customStartLocation || '').trim();
-        }
-        if (startLoc) {
-            submissionData.append('start_location', startLoc);
-        }
-        let endLoc = formData.endLocation;
-        if (endLoc === 'other') {
-            endLoc = (formData.customEndLocation || '').trim();
-        }
-        if (endLoc) {
-            submissionData.append('end_location', endLoc);
+        if (isErrandOrder && formData.category === 'service') {
+            let startLoc = formData.startLocation;
+            if (startLoc === 'other') {
+                startLoc = (formData.customStartLocation || '').trim();
+            }
+            if (startLoc) {
+                submissionData.append('start_location', startLoc);
+            }
+            let endLoc = formData.endLocation;
+            if (endLoc === 'other') {
+                endLoc = (formData.customEndLocation || '').trim();
+            }
+            if (endLoc) {
+                submissionData.append('end_location', endLoc);
+            }
         }
 
         // 失物招领：可选丢失者学号
@@ -398,7 +434,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
         }
 
         // 代课讲座字段（仅当分类为 lecture 时）
-        if (formData.category === 'lecture') {
+        if (formData.type === 'errand' && formData.category === 'lecture') {
             let lecLoc = formData.lectureLocation;
             if (lecLoc === 'other') {
                 lecLoc = (formData.customLectureLocation || '').trim();
@@ -408,7 +444,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
             if (formData.lectureEndAt) submissionData.append('lecture_end_at', formData.lectureEndAt);
         }
     
-        if (!(formData.type === 'sale' || formData.type === 'acquire')) {
+        if (!['sale', 'acquire', 'errand'].includes(formData.type)) {
             submissionData.append('price', 0);
         }
     
@@ -453,10 +489,10 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
     if (!isOpen) return null;
 
     // 根据类型决定是否显示价格字段
-    const showPriceField = formData.type === 'sale' || formData.type === 'acquire';
+    const showPriceField = ['sale', 'acquire', 'errand'].includes(formData.type);
     
     // 根据类型和分类决定是否显示地点字段
-    const showLocationFields = formData.type === 'sale' || formData.type === 'acquire' ? formData.category === 'service' : false;
+    const showLocationFields = formData.type === 'errand' && formData.category === 'service';
 
     const theme = getModuleTheme(formData.type);
 
@@ -481,6 +517,7 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                         <select name="type" value={formData.type} onChange={handleInputChange} className={`px-3 py-2 border rounded-md ${theme.inputFocus}`}>
                             <option value="sale">出售商品</option>
                             <option value="acquire">收购需求</option>
+                            <option value="errand">跑腿代办</option>
                             <option value="help">帮帮忙</option>
                             <option value="lostfound">失物招领</option>
                         </select>
@@ -567,6 +604,20 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                             ></textarea>
                             <p className="mt-1 text-xs text-gray-500">{theme.descHelp}</p>
                         </div>
+                        {formData.type === 'errand' && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">隐私备注（仅接单者可见，可选）</label>
+                                <textarea
+                                    name="errandPrivateNote"
+                                    value={formData.errandPrivateNote}
+                                    onChange={handleInputChange}
+                                    placeholder="填写联系方式、收件码等敏感信息，仅成功接单者可见"
+                                    rows="3"
+                                    className={`w-full mt-1 px-3 py-2 border rounded-md ${theme.inputFocus}`}
+                                ></textarea>
+                                <p className="mt-1 text-xs text-gray-500 text-rose-500">请勿在公开描述中透露敏感信息，可放在隐私备注内。</p>
+                            </div>
+                        )}
                         {showPriceField && (
                             <div>
                                 <label className="block text-sm font-medium text-gray-700">{theme.priceLabel || '价格 (元)'}</label>
@@ -582,8 +633,8 @@ const PostModal = ({ isOpen, onClose, editingItem, onSaveSuccess }) => {
                                 />
                             </div>
                         )}
-                        {/* 代课讲座字段（仅在 出售/收购 且 分类为 代课讲座 时显示） */}
-                        {(formData.type === 'sale' || formData.type === 'acquire') && formData.category === 'lecture' && (
+                        {/* 代课讲座字段（仅在 跑腿代办 且 分类为 代课讲座 时显示） */}
+                        {formData.type === 'errand' && formData.category === 'lecture' && (
                             <div className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700">讲座地点（可选）</label>

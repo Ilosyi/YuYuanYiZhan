@@ -10,12 +10,20 @@ const ListingCard = ({
     onContact,
     onOpenDetail,
     onToggleFavorite,
+    onAcceptErrand,
     isFavorited = false,
     theme,
 }) => {
     const { user } = useAuth(); // 2. 获取当前登录的用户信息
 
-    const statusText = { available: '上架中', in_progress: '交易中', completed: '已售出' };
+    const normalizedType = typeof item.type === 'string' ? item.type.trim().toLowerCase() : item.type;
+    const normalizedCategory = typeof item.category === 'string' ? item.category.trim().toLowerCase() : item.category;
+    const isErrand = normalizedType === 'errand' || (normalizedType === 'acquire' && normalizedCategory === 'service');
+    const statusText = {
+        available: isErrand ? '待接单' : '上架中',
+        in_progress: isErrand ? '进行中' : '交易中',
+        completed: isErrand ? '已完成' : '已售出'
+    };
     const statusColor = { available: 'bg-green-100 text-green-800', in_progress: 'bg-yellow-100 text-yellow-800', completed: 'bg-gray-100 text-gray-800' };
 
     const numericPrice = Number(item.price ?? 0);
@@ -24,17 +32,28 @@ const ListingCard = ({
     const isZeroPrice = hasNumericPrice && numericPrice === 0;
     const formattedPrice = hasNumericPrice ? `¥${numericPrice.toLocaleString()}` : '';
     const resolvedImage = resolveAssetUrl(item.image_url);
-    const imageUrl = resolvedImage || getDefaultListingImage(item.type) || FALLBACK_IMAGE;
+    const imageUrl = resolvedImage || getDefaultListingImage(normalizedType) || FALLBACK_IMAGE;
     const hasMultipleImages = Number(item.images_count || item.image_count || 0) > 1;
     const showDetailButton = Boolean(onOpenDetail);
     
     // ✅ 3. 新增检查：判断当前帖子是否由当前登录用户发布
     const isOwner = user && user.id === item.user_id;
     const isAvailable = item.status === 'available';
-    const canPurchase = item.type === 'sale' && isAvailable && !isOwner && typeof onPurchase === 'function';
-    const canContact = !isOwner && typeof onContact === 'function' && (
-        item.type === 'acquire' || (item.type === 'sale' && isAvailable)
-    );
+    const hasRunner = Boolean(item.errand_runner_id);
+    const canPurchase = normalizedType === 'sale' && isAvailable && !isOwner && typeof onPurchase === 'function';
+    const canContact = (() => {
+        if (isOwner || typeof onContact !== 'function') {
+            return false;
+        }
+        if (isErrand) {
+            if (!item.errand_runner_id || !user) {
+                return false;
+            }
+            return item.errand_runner_id === user.id;
+        }
+        return normalizedType === 'acquire' || (normalizedType === 'sale' && isAvailable);
+    })();
+    const canAcceptErrand = isErrand && isAvailable && !isOwner && !hasRunner && typeof onAcceptErrand === 'function';
 
     const handleOpenDetail = () => {
         if (onOpenDetail) {
@@ -59,7 +78,7 @@ const ListingCard = ({
                 <div>
                     <div className="flex justify-between items-start mb-1 sm:mb-2">
                         <h3 className="text-base sm:text-lg font-semibold text-gray-900 line-clamp-2">{item.title}</h3>
-                        {['sale', 'acquire'].includes(item.type) && (
+                        {['sale', 'acquire', 'errand'].includes(normalizedType) && (
                             <span className={`px-2 py-1 text-xs font-semibold rounded-full flex-shrink-0 ${statusColor[item.status]}`}>
                                 {statusText[item.status]}
                             </span>
@@ -100,6 +119,15 @@ const ListingCard = ({
                                 type="button"
                             >
                                 立即购买
+                            </button>
+                        )}
+                        {canAcceptErrand && (
+                            <button
+                                onClick={() => onAcceptErrand(item)}
+                                className="px-3 py-1 text-sm rounded-md bg-emerald-600 hover:bg-emerald-500 text-white"
+                                type="button"
+                            >
+                                接单
                             </button>
                         )}
                         {canContact && (

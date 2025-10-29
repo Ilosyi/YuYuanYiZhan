@@ -11,6 +11,7 @@ const deriveListingTypeKey = (rawType) => {
     if (rawType === 'lost' || rawType === 'found' || rawType === 'lostfound') return 'lostfound';
     if (rawType === 'help') return 'help';
     if (rawType === 'acquire') return 'acquire';
+    if (rawType === 'errand') return 'errand';
     return rawType || 'sale';
 };
 

@@ -1,6 +1,7 @@
 const DEFAULT_LISTING_IMAGES = {
     sale: '/default-images/sale.jpg',
     acquire: '/default-images/acquire.jpg',
+    errand: '/default-images/acquire.jpg',
     help: '/default-images/help.jpg',
     lostfound: '/default-images/lostfound.jpg',
 };

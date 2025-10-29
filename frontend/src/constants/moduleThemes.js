@@ -89,6 +89,28 @@ export const MODULE_THEMES = {
     imageHelp: '建议上传物品照片或地点示意图（选填）。',
     categoryLabel: '信息类型',
   },
+  errand: {
+    key: 'errand',
+    title: '发布 · 跑腿代办',
+    icon: '🛴',
+    headerBg: 'bg-gradient-to-r from-pink-600 to-pink-500',
+    headerText: 'text-white',
+    accentPill: 'bg-pink-50 text-pink-700',
+    accentBorder: 'border-pink-200',
+    inputFocus: 'focus:ring-pink-500 focus:border-pink-500',
+    buttonBg: 'bg-pink-600 hover:bg-pink-700',
+    buttonText: 'text-white',
+    priceText: 'text-pink-600',
+    outlineHoverText: 'hover:text-pink-600',
+    outlineHoverBorder: 'hover:border-pink-300',
+    softBg: 'bg-pink-50',
+    priceLabel: '酬劳* (元)',
+    titlePlaceholder: '例：求跑腿代取快递 / 求代课讲座',
+    descPlaceholder: '说明任务详情、时间地点、注意事项等信息',
+    descHelp: '请提供准确的执行要求与截止时间，便于他人合理安排。',
+    imageHelp: '可上传任务相关说明或截图（选填）。',
+    categoryLabel: '任务类型',
+  },
 };
 
 export const getModuleTheme = (type) => MODULE_THEMES[type] || MODULE_THEMES.sale;

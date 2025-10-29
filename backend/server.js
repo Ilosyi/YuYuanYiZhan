@@ -314,6 +314,87 @@ async function initializeDatabase() {
                 console.warn('为 listings 表添加 lecture_end_at 失败：', e.message);
             }
         }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_paid TINYINT(1) NOT NULL DEFAULT 0');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_paid 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_paid_at DATETIME NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_paid_at 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_runner_id INT NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_runner_id 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_accept_at DATETIME NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_accept_at 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_completion_image_url VARCHAR(500) NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_completion_image_url 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_completion_note TEXT NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_completion_note 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_private_note TEXT NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_private_note 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_completion_at DATETIME NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_completion_at 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD COLUMN errand_payment_released_at DATETIME NULL');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_FIELDNAME') {
+                console.warn('为 listings 表添加 errand_payment_released_at 失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute('ALTER TABLE listings ADD INDEX idx_errand_runner (errand_runner_id)');
+        } catch (e) {
+            if (e.code !== 'ER_DUP_KEYNAME') {
+                console.warn('为 listings 表添加 idx_errand_runner 索引失败：', e.message);
+            }
+        }
+        try {
+            await pool.execute(`
+                UPDATE listings
+                SET errand_paid = 1,
+                    errand_paid_at = COALESCE(errand_paid_at, NOW())
+                                WHERE type = 'errand'
+                  AND (errand_paid IS NULL OR errand_paid = 0)
+            `);
+        } catch (e) {
+            console.warn('初始化跑腿订单支付状态失败：', e.message);
+        }
         await pool.execute(`
             INSERT INTO listing_images (listing_id, image_url, sort_order)
             SELECT l.id, l.image_url, 0
@@ -366,6 +447,8 @@ const uploadListingImages = upload.fields([
 ]);
 /** 用户头像上传（单文件） */
 const uploadAvatar = upload.single('avatar');
+/** 跑腿订单完成凭证（单文件） */
+const uploadErrandProof = upload.single('evidence');
 
 /**
  * 规范化可空字符串：去空、空转 null、超长截断
@@ -433,6 +516,9 @@ const presentLocation = (value) => {
     if (code.toLowerCase() === 'other') return '其他地点';
     return code;
 };
+
+/** 判断帖子是否为收购模块下的跑腿订单 */
+const isErrandListingRecord = (record) => Boolean(record && record.type === 'errand');
 
 // 预设地点列表（用于“其他地点”筛选时的排除）
 // 注意：改为全中文，避免依赖 presentLocation 的显示转换
@@ -595,6 +681,23 @@ const authenticateToken = (req, res, next) => {
         req.user = user;
         next();
     });
+};
+
+/**
+ * 可选解析 Authorization 头部的 Bearer Token，失败时返回 null
+ * @param {import('express').Request} req
+ * @returns {{ id: number, username: string } | null}
+ */
+const tryDecodeToken = (req) => {
+    const authHeader = req.headers?.['authorization'];
+    if (!authHeader) return null;
+    const [scheme, token] = authHeader.split(' ');
+    if (!token || scheme?.toLowerCase() !== 'bearer') return null;
+    try {
+        return jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+        return null;
+    }
 };
 
 // =================================================================
@@ -1180,6 +1283,8 @@ app.delete('/api/listings/:id/favorite', authenticateToken, async (req, res) => 
  */
 app.get('/api/listings', async (req, res) => {
     try {
+        const viewer = tryDecodeToken(req);
+        const viewerId = viewer?.id ? Number(viewer.id) : null;
         const { type, userId, status, searchTerm, category, itemType, startLocation, endLocation } = req.query;
         let sql = `
             SELECT l.*, (SELECT COUNT(*) FROM listing_images li WHERE li.listing_id = l.id) AS images_count
@@ -1252,7 +1357,7 @@ app.get('/api/listings', async (req, res) => {
         }
         
         // 添加地点筛选（仅对跑腿服务）
-        if ((type === 'sale' || type === 'acquire') && category === 'service') {
+    if ((type === 'sale' || type === 'acquire' || type === 'errand') && category === 'service') {
             // 处理起始地点筛选
             if (startLocation && startLocation !== 'all') {
                 if (startLocation === 'other') {
@@ -1296,12 +1401,33 @@ app.get('/api/listings', async (req, res) => {
         
         sql += ' ORDER BY l.created_at DESC';
         const [rows] = await pool.execute(sql, params);
-        // 展示友好化：地点中文/自定义文本
-        const presented = rows.map((r) => ({
-            ...r,
-            start_location: presentLocation(r.start_location),
-            end_location: presentLocation(r.end_location),
-        }));
+        // 展示友好化：地点中文/自定义文本，并隐藏敏感跑腿信息
+        const presented = rows.map((raw) => {
+            const row = { ...raw };
+            const isErrand = row.type === 'errand';
+            if (isErrand) {
+                const allowedIds = new Set([Number(row.user_id)]);
+                if (row.errand_runner_id != null) {
+                    allowedIds.add(Number(row.errand_runner_id));
+                }
+                const canViewFull = Boolean(viewerId && allowedIds.has(viewerId));
+                if (!canViewFull) {
+                    row.image_url = null;
+                    row.images_count = 0;
+                    row.start_location = null;
+                    row.end_location = null;
+                    row.errand_completion_image_url = null;
+                    row.errand_completion_note = null;
+                    row.errand_private_note = null;
+                }
+                row.errand_locked = !canViewFull;
+            } else {
+                row.errand_private_note = null;
+            }
+            row.start_location = presentLocation(row.start_location);
+            row.end_location = presentLocation(row.end_location);
+            return row;
+        });
         res.json(presented);
     } catch (err) {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
@@ -1314,13 +1440,21 @@ app.get('/api/listings', async (req, res) => {
  * 创建帖子，支持多图上传与封面自动选取，支持 start_location/end_location
  */
 app.post('/api/listings', authenticateToken, uploadListingImages, async (req, res) => {
-    const { title, description, price, category, type, start_location, end_location } = req.body;
+    const { title, description, category, type, start_location, end_location } = req.body;
     const { id: userId, username: userName } = req.user;
     const uploadedImages = gatherUploadedImages(req);
     const coverImageUrl = uploadedImages.length ? buildImageUrl(uploadedImages[0]) : null;
 
     if (!title || !description || !type) {
         return res.status(400).json({ message: 'Title, description, and type are required.' });
+    }
+
+    const rawPriceInput = Array.isArray(req.body?.price) ? req.body.price[0] : req.body?.price;
+    const parsedPrice = Number(rawPriceInput);
+    const normalizedPrice = Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : 0;
+    const isErrandOrder = type === 'errand';
+    if (isErrandOrder && normalizedPrice <= 0) {
+        return res.status(400).json({ message: '跑腿代办需设置大于 0 的酬劳。' });
     }
 
     let connection;
@@ -1343,20 +1477,25 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
         const lectureStartAt = category === 'lecture' ? parseDateValue(req.body?.lectureStartAt ?? req.body?.lecture_start_at) : null;
         const lectureEndAt = category === 'lecture' ? parseDateValue(req.body?.lectureEndAt ?? req.body?.lecture_end_at) : null;
 
-        const sql = `
-            INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url,
-                                  book_type, book_major,
-                                  lecture_location, lecture_start_at, lecture_end_at,
-                                  start_location, end_location,
-                                  lost_student_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?,
-                    ?, ?, ?,
-                    ?, ?,
-                    ?)
-        `;
-        const startLoc = normalizeFormLocation(start_location);
-        const endLoc = normalizeFormLocation(end_location);
+    const sql = `
+        INSERT INTO listings (title, description, price, category, user_id, user_name, type, image_url,
+                  book_type, book_major,
+                  lecture_location, lecture_start_at, lecture_end_at,
+                  start_location, end_location,
+                  lost_student_id,
+                  errand_paid, errand_paid_at, errand_runner_id, errand_accept_at,
+                  errand_completion_image_url, errand_completion_note, errand_private_note, errand_completion_at, errand_payment_released_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?,
+            ?, ?, ?,
+            ?, ?,
+            ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?)
+    `;
+    const shouldStoreLocations = isErrandOrder && category === 'service';
+        const startLoc = shouldStoreLocations ? normalizeFormLocation(start_location) : null;
+        const endLoc = shouldStoreLocations ? normalizeFormLocation(end_location) : null;
         // 丢失者学号（仅 lostfound 模块允许）
         let lostStudentId = sanitizeNullableString(req.body?.lostStudentId ?? req.body?.lost_student_id, 16);
         if (type !== 'lostfound') {
@@ -1365,12 +1504,17 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
             await connection.rollback();
             return res.status(400).json({ message: '丢失者学号格式不合法。' });
         }
+        const errandPaid = isErrandOrder ? 1 : 0;
+        const errandPaidAt = isErrandOrder ? new Date() : null;
+        const errandPrivateNote = isErrandOrder ? sanitizeNullableString(req.body?.errandPrivateNote ?? req.body?.errand_private_note, 2000) : null;
         const [result] = await connection.execute(sql, [
-            title, description, price || 0, category, userId, userName, type, coverImageUrl,
+            title, description, normalizedPrice, category, userId, userName, type, coverImageUrl,
             bookType, bookMajor,
             lectureLocation, lectureStartAt, lectureEndAt,
             startLoc, endLoc,
-            lostStudentId
+            lostStudentId,
+            errandPaid, errandPaidAt, null, null,
+            null, null, errandPrivateNote, null, null
         ]);
 
         if (uploadedImages.length) {
@@ -1413,6 +1557,7 @@ app.post('/api/listings', authenticateToken, uploadListingImages, async (req, re
 
         res.status(201).json({ message: 'Listing created successfully!', listingId: result.insertId });
     } catch (err) {
+        console.error('创建帖子失败', err);
         if (connection) await connection.rollback();
         deletePhysicalFiles(uploadedImages.map((file) => buildImageUrl(file)));
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
@@ -1496,16 +1641,21 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
             ? updatedImages[0].image_url
             : existingImageUrl || null;
 
-        const allowedTypes = new Set(['sale', 'acquire', 'help', 'lostfound']);
+        const allowedTypes = new Set(['sale', 'acquire', 'help', 'lostfound', 'errand']);
         const rawType = sanitizeNullableString(req.body?.type, 32);
         const nextType = allowedTypes.has(rawType) ? rawType : listings[0].type;
 
         // 价格：仅出售/收购保留，其他类型默认 0
         let normalizedPrice = 0;
-        if (nextType === 'sale' || nextType === 'acquire') {
+        if (nextType === 'sale' || nextType === 'acquire' || nextType === 'errand') {
             const rawPrice = Array.isArray(req.body?.price) ? req.body.price[0] : req.body?.price;
             const numericPrice = Number(rawPrice);
             normalizedPrice = Number.isFinite(numericPrice) ? numericPrice : Number(listings[0].price || 0);
+        }
+        const isErrandListing = nextType === 'errand';
+        if (isErrandListing && normalizedPrice <= 0) {
+            await connection.rollback();
+            return res.status(400).json({ message: '跑腿代办需设置大于 0 的酬劳。' });
         }
 
         const rawBookType = sanitizeNullableString(req.body?.bookType ?? req.body?.book_type, 50);
@@ -1536,17 +1686,33 @@ app.put('/api/listings/:id', authenticateToken, uploadListingImages, async (req,
             book_type = ?, book_major = ?,
             lecture_location = ?, lecture_start_at = ?, lecture_end_at = ?,
             start_location = ?, end_location = ?,
-            lost_student_id = ?
+            lost_student_id = ?,
+            errand_private_note = ?
             WHERE id = ? AND user_id = ?
         `;
-        const startLoc = normalizeFormLocation(start_location);
-        const endLoc = normalizeFormLocation(end_location);
+        const shouldStoreLocations = isErrandListing && category === 'service';
+        const startLoc = shouldStoreLocations
+            ? (start_location === undefined ? listings[0].start_location : normalizeFormLocation(start_location))
+            : null;
+        const endLoc = shouldStoreLocations
+            ? (end_location === undefined ? listings[0].end_location : normalizeFormLocation(end_location))
+            : null;
+        let errandPrivateNote = null;
+        if (isErrandListing) {
+            const rawPrivate = req.body?.errandPrivateNote ?? req.body?.errand_private_note;
+            if (rawPrivate === undefined) {
+                errandPrivateNote = listings[0].errand_private_note ?? null;
+            } else {
+                errandPrivateNote = sanitizeNullableString(rawPrivate, 2000);
+            }
+        }
         await connection.execute(sql, [
             title, description, normalizedPrice, category, nextType, coverImageUrl,
             bookType, bookMajor,
             lectureLocation, lectureStartAt, lectureEndAt,
             startLoc, endLoc,
             lostStudentId,
+            errandPrivateNote,
             listingId, userId
         ]);
 
@@ -1569,11 +1735,11 @@ app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
     const listingId = req.params.id;
     const { id: userId } = req.user;
     try {
-        const [listings] = await pool.execute('SELECT image_url FROM listings WHERE id = ? AND user_id = ?', [listingId, userId]);
+        const [listings] = await pool.execute('SELECT image_url, errand_completion_image_url FROM listings WHERE id = ? AND user_id = ?', [listingId, userId]);
         if (listings.length === 0) {
             return res.status(403).json({ message: 'Forbidden: You do not own this listing or it does not exist.' });
         }
-        const { image_url } = listings[0];
+        const { image_url, errand_completion_image_url } = listings[0];
 
         const [galleryImages] = await pool.execute(
             'SELECT image_url FROM listing_images WHERE listing_id = ?',
@@ -1582,6 +1748,9 @@ app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
         const filesToDelete = new Set();
         if (image_url) {
             filesToDelete.add(image_url);
+        }
+        if (errand_completion_image_url) {
+            filesToDelete.add(errand_completion_image_url);
         }
         galleryImages.forEach((row) => {
             if (row.image_url) {
@@ -1605,11 +1774,14 @@ app.delete('/api/listings/:id', authenticateToken, async (req, res) => {
 /** GET /api/listings/:id/detail 公开：帖子详情 + 图集 + 回复 */
 app.get('/api/listings/:id/detail', async (req, res) => {
     const listingId = req.params.id;
+    const viewer = tryDecodeToken(req);
+    const viewerId = viewer?.id ? Number(viewer.id) : null;
     try {
         const [listings] = await pool.execute(`
-            SELECT l.*, u.username AS owner_name
+            SELECT l.*, u.username AS owner_name, runner.username AS errand_runner_name
             FROM listings l
             JOIN users u ON l.user_id = u.id
+            LEFT JOIN users runner ON l.errand_runner_id = runner.id
             WHERE l.id = ?
         `, [listingId]);
 
@@ -1617,10 +1789,21 @@ app.get('/api/listings/:id/detail', async (req, res) => {
             return res.status(404).json({ message: 'Listing not found.' });
         }
 
-    const listing = listings[0];
-    // 纠偏 + 展示友好化
-    listing.start_location = presentLocation(listing.start_location);
-    listing.end_location = presentLocation(listing.end_location);
+        const listing = listings[0];
+    const isSensitiveErrand = listing.type === 'errand';
+        if (isSensitiveErrand) {
+            const allowedIds = new Set([Number(listing.user_id)]);
+            if (listing.errand_runner_id) {
+                allowedIds.add(Number(listing.errand_runner_id));
+            }
+            if (!viewerId || !allowedIds.has(viewerId)) {
+                return res.status(403).json({ message: '该跑腿订单详情仅接单人和发布者可见。' });
+            }
+        }
+
+        // 纠偏 + 展示友好化
+        listing.start_location = presentLocation(listing.start_location);
+        listing.end_location = presentLocation(listing.end_location);
         const [images] = await pool.execute(
             'SELECT id, image_url, sort_order FROM listing_images WHERE listing_id = ? ORDER BY sort_order, id',
             [listingId]
@@ -1658,6 +1841,205 @@ app.get('/api/listings/:id/detail', async (req, res) => {
         res.json({ listing, replies: roots });
     } catch (err) {
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    }
+});
+
+// 跑腿订单：接单
+app.post('/api/errands/:id/accept', authenticateToken, async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+        return res.status(400).json({ message: 'Invalid listing id.' });
+    }
+    const runnerId = req.user.id;
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        const [rows] = await connection.execute('SELECT * FROM listings WHERE id = ? FOR UPDATE', [listingId]);
+        if (!rows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Listing not found.' });
+        }
+        const listing = rows[0];
+        if (!isErrandListingRecord(listing)) {
+            await connection.rollback();
+            return res.status(400).json({ message: '该帖子不是跑腿订单，无法接单。' });
+        }
+        if (Number(listing.user_id) === runnerId) {
+            await connection.rollback();
+            return res.status(400).json({ message: '不能接自己的跑腿订单。' });
+        }
+        if (listing.status !== 'available') {
+            await connection.rollback();
+            return res.status(409).json({ message: '该跑腿订单已被接或不在上架中。' });
+        }
+        if (listing.errand_runner_id) {
+            await connection.rollback();
+            return res.status(409).json({ message: '已有同学接下该跑腿订单。' });
+        }
+        const paidFlag = Number(listing.errand_paid || 0) === 1 || Boolean(listing.errand_paid_at);
+        if (!paidFlag) {
+            await connection.rollback();
+            return res.status(409).json({ message: '发单人尚未完成支付，暂无法接单。' });
+        }
+
+        await connection.execute(
+            'UPDATE listings SET errand_runner_id = ?, errand_accept_at = NOW(), status = "in_progress" WHERE id = ?',
+            [runnerId, listingId]
+        );
+
+        try {
+            await connection.execute(
+                'INSERT INTO messages (listing_id, sender_id, receiver_id, content) VALUES (?, ?, ?, ?)',
+                [listingId, runnerId, listing.user_id, '有同学已接单，请及时关注任务进度。']
+            );
+        } catch (messageError) {
+            console.warn('接单通知发送失败：', messageError.message);
+        }
+
+        await connection.commit();
+        res.json({ message: '接单成功，请按要求完成任务。' });
+    } catch (err) {
+        if (connection) await connection.rollback();
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    } finally {
+        if (connection) connection.release();
+    }
+});
+
+// 跑腿订单：上传完成凭证
+app.post('/api/errands/:id/proof', authenticateToken, uploadErrandProof, async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+        if (req.file) deletePhysicalFiles([buildImageUrl(req.file)]);
+        return res.status(400).json({ message: 'Invalid listing id.' });
+    }
+    const runnerId = req.user.id;
+    const proofFile = req.file;
+    if (!proofFile) {
+        return res.status(400).json({ message: '请上传完成照片作为凭证。' });
+    }
+    const proofUrl = buildImageUrl(proofFile);
+    const proofNote = sanitizeNullableString(req.body?.note, 500);
+
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        const [rows] = await connection.execute('SELECT * FROM listings WHERE id = ? FOR UPDATE', [listingId]);
+        if (!rows.length) {
+            await connection.rollback();
+            deletePhysicalFiles([proofUrl]);
+            return res.status(404).json({ message: 'Listing not found.' });
+        }
+        const listing = rows[0];
+        if (!isErrandListingRecord(listing)) {
+            await connection.rollback();
+            deletePhysicalFiles([proofUrl]);
+            return res.status(400).json({ message: '该帖子不是跑腿订单，无法上传凭证。' });
+        }
+        if (Number(listing.errand_runner_id) !== runnerId) {
+            await connection.rollback();
+            deletePhysicalFiles([proofUrl]);
+            return res.status(403).json({ message: '仅接单人可以上传完成凭证。' });
+        }
+        if (listing.status !== 'in_progress') {
+            await connection.rollback();
+            deletePhysicalFiles([proofUrl]);
+            return res.status(409).json({ message: '当前状态不允许上传完成凭证。' });
+        }
+
+        const previousProof = listing.errand_completion_image_url;
+        await connection.execute(
+            'UPDATE listings SET errand_completion_image_url = ?, errand_completion_note = ?, errand_completion_at = NOW() WHERE id = ?',
+            [proofUrl, proofNote, listingId]
+        );
+
+        try {
+            await connection.execute(
+                'INSERT INTO messages (listing_id, sender_id, receiver_id, content) VALUES (?, ?, ?, ?)',
+                [listingId, runnerId, listing.user_id, '跑腿订单已提交完成凭证，请及时确认。']
+            );
+        } catch (messageError) {
+            console.warn('完成凭证通知发送失败：', messageError.message);
+        }
+
+        await connection.commit();
+        if (previousProof && previousProof !== proofUrl) {
+            deletePhysicalFiles([previousProof]);
+        }
+        res.json({ message: '凭证上传成功，请等待发单人确认。', proofUrl });
+    } catch (err) {
+        if (connection) await connection.rollback();
+        deletePhysicalFiles([proofUrl]);
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    } finally {
+        if (connection) connection.release();
+    }
+});
+
+// 跑腿订单：发单人确认完成，释放酬劳
+app.post('/api/errands/:id/confirm', authenticateToken, async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+        return res.status(400).json({ message: 'Invalid listing id.' });
+    }
+    const ownerId = req.user.id;
+    let connection;
+    try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        const [rows] = await connection.execute('SELECT * FROM listings WHERE id = ? FOR UPDATE', [listingId]);
+        if (!rows.length) {
+            await connection.rollback();
+            return res.status(404).json({ message: 'Listing not found.' });
+        }
+        const listing = rows[0];
+        if (!isErrandListingRecord(listing)) {
+            await connection.rollback();
+            return res.status(400).json({ message: '该帖子不是跑腿订单，无法确认完成。' });
+        }
+        if (Number(listing.user_id) !== ownerId) {
+            await connection.rollback();
+            return res.status(403).json({ message: '仅发单人可以确认完成。' });
+        }
+        if (!listing.errand_runner_id) {
+            await connection.rollback();
+            return res.status(409).json({ message: '尚未有同学接单，无法确认完成。' });
+        }
+        if (!listing.errand_completion_image_url) {
+            await connection.rollback();
+            return res.status(409).json({ message: '对方尚未上传完成凭证。' });
+        }
+        if (listing.status === 'completed') {
+            await connection.rollback();
+            return res.status(409).json({ message: '该跑腿订单已确认完成。' });
+        }
+
+        await connection.execute(
+            'UPDATE listings SET status = "completed", errand_payment_released_at = NOW() WHERE id = ?',
+            [listingId]
+        );
+
+        try {
+            await connection.execute(
+                'INSERT INTO messages (listing_id, sender_id, receiver_id, content) VALUES (?, ?, ?, ?)',
+                [listingId, ownerId, listing.errand_runner_id, '跑腿订单已确认完成，酬劳已划转。']
+            );
+        } catch (messageError) {
+            console.warn('确认完成通知发送失败：', messageError.message);
+        }
+
+        await connection.commit();
+        res.json({ message: '已确认完成，酬劳已模拟转账给接单人。' });
+    } catch (err) {
+        if (connection) await connection.rollback();
+        res.status(500).json({ message: 'Internal Server Error', error: err.message });
+    } finally {
+        if (connection) connection.release();
     }
 });
 
@@ -1704,11 +2086,70 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
 /** GET /api/orders?role=buyer|seller&status=xxx 查询我的订单 */
 app.get('/api/orders', authenticateToken, async (req, res) => {
     const { id: userId } = req.user;
-    const { role, status } = req.query; // role: 'buyer' or 'seller'
-    if (!['buyer', 'seller'].includes(role)) {
-        return res.status(400).json({ message: 'Role must be "buyer" or "seller".' });
+    const { role, status } = req.query; // role: 'buyer' | 'seller' | 'runner'
+    if (!['buyer', 'seller', 'runner'].includes(role)) {
+        return res.status(400).json({ message: 'Role must be "buyer"、"seller" 或 "runner".' });
     }
     try {
+        if (role === 'runner') {
+            let sql = `
+                SELECT 
+                    l.id AS listing_id,
+                    l.title AS listing_title,
+                    l.description,
+                    l.price,
+                    l.status,
+                    l.type AS listing_type,
+                    l.image_url AS listing_image_url,
+                    l.errand_accept_at,
+                    l.errand_completion_at,
+                    l.errand_payment_released_at,
+                    l.errand_completion_image_url,
+                    l.errand_completion_note,
+                    l.errand_private_note,
+                    l.start_location,
+                    l.end_location,
+                    l.user_id AS seller_id,
+                    owner.username AS seller_name,
+                    l.errand_runner_id AS buyer_id,
+                    runner.username AS buyer_name
+                FROM listings l
+                JOIN users owner ON l.user_id = owner.id
+                LEFT JOIN users runner ON l.errand_runner_id = runner.id
+                WHERE l.type = 'errand' AND l.errand_runner_id = ?
+            `;
+            const params = [userId];
+            if (status && status !== 'all') {
+                sql += ' AND l.status = ?';
+                params.push(status);
+            }
+            sql += ' ORDER BY COALESCE(l.errand_accept_at, l.created_at) DESC';
+            const [rows] = await pool.execute(sql, params);
+            const formatted = rows.map((row) => ({
+                id: `errand-${row.listing_id}`,
+                listing_id: row.listing_id,
+                listing_title: row.listing_title,
+                listing_image_url: row.listing_image_url,
+                listing_type: row.listing_type,
+                price: row.price,
+                status: row.status,
+                seller_id: row.seller_id,
+                seller_name: row.seller_name,
+                buyer_id: row.buyer_id,
+                buyer_name: row.buyer_name,
+                errand_accept_at: row.errand_accept_at,
+                errand_completion_at: row.errand_completion_at,
+                errand_payment_released_at: row.errand_payment_released_at,
+                errand_completion_image_url: row.errand_completion_image_url,
+                errand_completion_note: row.errand_completion_note,
+                errand_private_note: row.errand_private_note,
+                start_location: row.start_location,
+                end_location: row.end_location,
+                order_kind: 'errand'
+            }));
+            return res.json(formatted);
+        }
+
         let sql = `
             SELECT o.*, l.title as listing_title, l.image_url as listing_image_url, l.type as listing_type,
             u_buyer.username as buyer_name, u_seller.username as seller_name
@@ -1727,6 +2168,13 @@ app.get('/api/orders', authenticateToken, async (req, res) => {
         const [rows] = await pool.execute(sql, params);
         res.json(rows);
     } catch (err) {
+        console.error('[Orders] Failed to fetch orders', {
+            userId,
+            role,
+            status,
+            error: err.message,
+            stack: err.stack
+        });
         res.status(500).json({ message: 'Internal Server Error', error: err.message });
     }
 });
@@ -1897,6 +2345,27 @@ app.post('/api/messages/conversations/:otherUserId/read', authenticateToken, asy
 app.get('/api/listings/:id/replies', async (req, res) => {
     try {
         const listingId = Number(req.params.id);
+        if (!Number.isInteger(listingId) || listingId <= 0) {
+            return res.status(400).json({ message: 'Invalid listing id.' });
+        }
+
+        const viewer = tryDecodeToken(req);
+        const viewerId = viewer?.id ? Number(viewer.id) : null;
+        const [[listing]] = await pool.execute(
+            'SELECT user_id, type, category, errand_runner_id FROM listings WHERE id = ? LIMIT 1',
+            [listingId]
+        );
+        if (!listing) {
+            return res.status(404).json({ message: 'Listing not found.' });
+        }
+        if (isErrandListingRecord(listing)) {
+            const allowedIds = new Set([Number(listing.user_id)]);
+            if (listing.errand_runner_id) allowedIds.add(Number(listing.errand_runner_id));
+            if (!viewerId || !allowedIds.has(viewerId)) {
+                return res.status(403).json({ message: '跑腿订单留言仅接单人和发布者可见。' });
+            }
+        }
+
         const [rows] = await pool.execute(
             'SELECT id, user_id, user_name, content, created_at, parent_reply_id FROM replies WHERE listing_id = ? ORDER BY created_at ASC',
             [listingId]
@@ -1925,10 +2394,28 @@ app.post('/api/listings/:id/replies', authenticateToken, async (req, res) => {
     const { content, parentReplyId } = req.body || {};
     const { id: userId, username: userName } = req.user;
     const text = String(content || '').trim();
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+        return res.status(400).json({ message: 'Invalid listing id.' });
+    }
     if (!text) {
         return res.status(400).json({ message: 'Reply content cannot be empty.' });
     }
     try {
+        const [[listing]] = await pool.execute(
+            'SELECT user_id, type, category, errand_runner_id FROM listings WHERE id = ? LIMIT 1',
+            [listingId]
+        );
+        if (!listing) {
+            return res.status(404).json({ message: 'Listing not found.' });
+        }
+        if (isErrandListingRecord(listing)) {
+            const allowedIds = new Set([Number(listing.user_id)]);
+            if (listing.errand_runner_id) allowedIds.add(Number(listing.errand_runner_id));
+            if (!allowedIds.has(userId)) {
+                return res.status(403).json({ message: '跑腿订单暂不支持公开留言。' });
+            }
+        }
+
         let parentId = parentReplyId ? Number(parentReplyId) : null;
         if (parentId && (!Number.isInteger(parentId) || parentId <= 0)) {
             parentId = null;

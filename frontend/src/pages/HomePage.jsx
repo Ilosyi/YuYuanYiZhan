@@ -16,10 +16,8 @@ const CATEGORY_CONFIG = {
         books: '图书教材',
         beauty: '美妆护肤',
         stationery: '文具',
-        lecture: '代课讲座',
         clothing: '服饰鞋包',
         life: '生活用品',
-        service: '跑腿服务',
         others: '其他',
     },
     acquire: {
@@ -28,11 +26,15 @@ const CATEGORY_CONFIG = {
         books: '图书教材',
         beauty: '美妆护肤',
         stationery: '文具',
-        lecture: '代课讲座',
         clothing: '服饰鞋包',
         life: '生活用品',
-        service: '跑腿服务',
         others: '其他',
+    },
+    errand: {
+        all: '全部任务',
+        service: '校园跑腿',
+        lecture: '代课讲座',
+        others: '其他代办',
     },
     help: {
         all: '全部求助',
@@ -73,6 +75,7 @@ const LOSTFOUND_ITEM_TYPE_CONFIG = {
 const MODE_TEXT = {
     sale: '出售',
     acquire: '收购',
+    errand: '跑腿代办',
     help: '帮帮忙',
     lostfound: '失物招领',
 };
@@ -126,19 +129,18 @@ const InfoCard = ({
     
     // 修改InfoCard组件中的失物招领分类解析逻辑
     if (isLostFound) {
-    // 修复：确保正确解析所有物品分类（移除调试日志）
-    if (item.category && item.category.includes('_')) {
-        const [type, itemType] = item.category.split('_');
-        const itemLabel = LOSTFOUND_ITEM_CONFIG[itemType] || '其他';
-        badgeText = `${type === 'found' ? '招领' : '寻物'}: ${itemLabel}`;
-    } else {
-        // 兼容旧数据格式
-        badgeText = item.type === 'found' ? '招领' : '寻物';
-    }
-    
-    badgeStyle = item.type === 'found'
-        ? 'bg-emerald-100 text-emerald-700'
-        : 'bg-orange-100 text-orange-700';
+        if (item.category && item.category.includes('_')) {
+            const [type, itemType] = item.category.split('_');
+            const itemLabel = LOSTFOUND_ITEM_CONFIG[itemType] || '其他';
+            badgeText = `${type === 'found' ? '招领' : '寻物'}: ${itemLabel}`;
+        } else {
+            // 兼容旧数据格式
+            badgeText = item.type === 'found' ? '招领' : '寻物';
+        }
+
+        badgeStyle = item.type === 'found'
+            ? 'bg-emerald-100 text-emerald-700'
+            : 'bg-orange-100 text-orange-700';
     } else {
         badgeText = item.category;
     }
@@ -242,6 +244,11 @@ const HomePage = ({ onNavigate = () => {} }) => {
     const [editingReplyId, setEditingReplyId] = useState(null);
     const [editingContent, setEditingContent] = useState('');
     const [activeImageIndex, setActiveImageIndex] = useState(0);
+    const [proofFile, setProofFile] = useState(null);
+    const [proofNote, setProofNote] = useState('');
+    const [proofPreviewUrl, setProofPreviewUrl] = useState('');
+    const [proofUploading, setProofUploading] = useState(false);
+    const [confirmingPayout, setConfirmingPayout] = useState(false);
     const [favoriteIds, setFavoriteIds] = useState(() => new Set());
     const pendingDetailRef = useRef(null);
 
@@ -365,17 +372,17 @@ const HomePage = ({ onNavigate = () => {} }) => {
                 category: category !== 'all' ? category : undefined,
                 itemType: activeMode === 'lostfound' && itemType !== 'all' ? itemType : undefined,
                 // 确保参数名称与后端一致
-                startLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && startLocation !== 'all' ? startLocation : undefined,
-                endLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && endLocation !== 'all' ? endLocation : undefined,
+                startLocation: activeMode === 'errand' && category === 'service' && startLocation !== 'all' ? startLocation : undefined,
+                endLocation: activeMode === 'errand' && category === 'service' && endLocation !== 'all' ? endLocation : undefined,
                 // 图书教材细分
                 bookType: (activeMode === 'sale' || activeMode === 'acquire') && category === 'books' && bookType !== 'all' ? bookType : undefined,
                 bookMajor: (activeMode === 'sale' || activeMode === 'acquire') && category === 'books' && bookMajor.trim() ? bookMajor.trim() : undefined,
                 // 代课讲座筛选
-                lectureLocation: (activeMode === 'sale' || activeMode === 'acquire') && category === 'lecture' && (lectureLocation !== 'all' || customLectureLocation.trim())
+                lectureLocation: activeMode === 'errand' && category === 'lecture' && (lectureLocation !== 'all' || customLectureLocation.trim())
                     ? (lectureLocation === 'other' ? (customLectureLocation.trim() || undefined) : lectureLocation)
                     : undefined,
-                lectureStartFrom: (activeMode === 'sale' || activeMode === 'acquire') && category === 'lecture' && lectureStartFrom ? lectureStartFrom : undefined,
-                lectureEndTo: (activeMode === 'sale' || activeMode === 'acquire') && category === 'lecture' && lectureEndTo ? lectureEndTo : undefined,
+                lectureStartFrom: activeMode === 'errand' && category === 'lecture' && lectureStartFrom ? lectureStartFrom : undefined,
+                lectureEndTo: activeMode === 'errand' && category === 'lecture' && lectureEndTo ? lectureEndTo : undefined,
             },
         });
         setListings(response.data);
@@ -388,8 +395,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
     }, [activeMode, searchTerm, category, itemType, startLocation, endLocation, bookType, bookMajor, lectureLocation, customLectureLocation, lectureStartFrom, lectureEndTo]);
     
     // 在UI中添加地点筛选器（在物品类型筛选器之后）
-    {/* 仅在出售/收购模式且分类为跑腿服务时显示地点筛选器 */}
-    {(activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && (
+    {/* 仅在跑腿代办模块且分类为跑腿服务时显示地点筛选器 */}
+    {activeMode === 'errand' && category === 'service' && (
         <>
             <select
                 value={startLocation}
@@ -457,6 +464,99 @@ const HomePage = ({ onNavigate = () => {} }) => {
         }
     };
 
+    const handleAcceptErrand = async (item) => {
+        if (!user) {
+            toast.info('请先登录再接单。');
+            return;
+        }
+        try {
+            await api.post(`/api/errands/${item.id}/accept`);
+            toast.success('接单成功，请查看订单详情。');
+            await fetchListings();
+            openDetail({ ...item, errand_runner_id: user.id });
+        } catch (err) {
+            console.error(err);
+            toast.error(err.response?.data?.message || '接单失败，请稍后再试。');
+        }
+    };
+
+    const handleProofFileChange = (event) => {
+        const selected = event.target.files?.[0] || null;
+        if (proofPreviewUrl) {
+            URL.revokeObjectURL(proofPreviewUrl);
+            setProofPreviewUrl('');
+        }
+        setProofFile(selected);
+        if (selected) {
+            setProofPreviewUrl(URL.createObjectURL(selected));
+        }
+        if (event.target) {
+            event.target.value = '';
+        }
+    };
+
+    const handleUploadProof = async () => {
+        if (!detailListing) return;
+        if (!proofFile) {
+            toast.warning('请选择完成照片。');
+            return;
+        }
+        setProofUploading(true);
+        try {
+            const formData = new FormData();
+            formData.append('evidence', proofFile);
+            if (proofNote.trim()) {
+                formData.append('note', proofNote.trim());
+            }
+            await api.post(`/api/errands/${detailListing.id}/proof`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            toast.success('已上传完成凭证，请等待发单人确认。');
+            setProofFile(null);
+            if (proofPreviewUrl) {
+                URL.revokeObjectURL(proofPreviewUrl);
+                setProofPreviewUrl('');
+            }
+            setProofNote('');
+            await loadDetail(detailListing.id);
+            await fetchListings();
+        } catch (err) {
+            console.error(err);
+            toast.error(err.response?.data?.message || '上传失败，请稍后再试。');
+        } finally {
+            setProofUploading(false);
+        }
+    };
+
+    const handleConfirmErrand = async () => {
+        if (!detailListing) return;
+        let ok = true;
+        try {
+            ok = await confirm({
+                title: '确认完成',
+                message: '确认订单已完成并将酬劳划转给接单人？',
+                tone: 'success',
+                confirmText: '确认完成',
+                cancelText: '暂不确认',
+            });
+        } catch {
+            ok = window.confirm('确认订单已完成并将酬劳划转给接单人？');
+        }
+        if (!ok) return;
+        setConfirmingPayout(true);
+        try {
+            await api.post(`/api/errands/${detailListing.id}/confirm`);
+            toast.success('已确认完成，酬劳已模拟转账。');
+            await loadDetail(detailListing.id);
+            await fetchListings();
+        } catch (err) {
+            console.error(err);
+            toast.error(err.response?.data?.message || '操作失败，请稍后再试。');
+        } finally {
+            setConfirmingPayout(false);
+        }
+    };
+
     const handleToggleFavorite = async (item, shouldFavorite) => {
         if (!user) {
             toast.info('请先登录后再收藏。');
@@ -490,13 +590,40 @@ const HomePage = ({ onNavigate = () => {} }) => {
             toast.info('请先登录后再联系对方。');
             return;
         }
-        if (!item.user_id) {
+        if (!item?.user_id) {
             toast.error('无法获取发布者信息。');
             return;
         }
 
-        if (item.user_id === user.id) {
+        const isErrandListing = item.type === 'errand' || (item.type === 'acquire' && item.category === 'service');
+        const isOwner = user.id === item.user_id;
+        const isRunner = item.errand_runner_id && user.id === item.errand_runner_id;
+
+        let targetUserId = item.user_id;
+        let targetName = item.user_name || item.owner_name;
+
+        if (isErrandListing) {
+            if (isOwner) {
+                if (!item.errand_runner_id) {
+                    toast.info('当前仍在等待接单，接单者确认后再联系TA。');
+                    return;
+                }
+                targetUserId = item.errand_runner_id;
+                targetName = item.errand_runner_name || '接单者';
+            } else if (isRunner) {
+                targetUserId = item.user_id;
+                targetName = item.user_name || item.owner_name;
+            } else {
+                toast.info('仅发布者与接单者可发起沟通。');
+                return;
+            }
+        } else if (isOwner) {
             toast.info('这是您自己发布的内容哦。');
+            return;
+        }
+
+        if (!targetUserId || targetUserId === user.id) {
+            toast.info('暂时无法发起对话。');
             return;
         }
 
@@ -505,8 +632,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
             window.localStorage.setItem(
                 'yy_pending_chat',
                 JSON.stringify({
-                    userId: item.user_id,
-                    username: item.user_name || item.owner_name,
+                    userId: targetUserId,
+                    username: targetName,
                     listing: {
                         id: item.id,
                         type: item.type || activeMode,
@@ -562,10 +689,31 @@ const HomePage = ({ onNavigate = () => {} }) => {
     };
 
     const openDetail = (item) => {
+        const isErrand = item.type === 'errand' || (item.type === 'acquire' && item.category === 'service');
+        const viewerId = user?.id;
+        const isOwner = viewerId && item.user_id === viewerId;
+        const isRunner = viewerId && item.errand_runner_id === viewerId;
+        if (isErrand) {
+            if (!user) {
+                toast.info('请登录后查看跑腿订单详情。');
+                return;
+            }
+            if (!isOwner && !isRunner) {
+                toast.info('该跑腿订单详情仅接单人和发布者可查看。');
+                return;
+            }
+        }
+        if (proofPreviewUrl) {
+            URL.revokeObjectURL(proofPreviewUrl);
+            setProofPreviewUrl('');
+        }
+        setProofFile(null);
+        setProofNote('');
         setIsDetailOpen(true);
         setReplyContent('');
         setDetailListing(null);
         setDetailReplies([]);
+        setDetailError('');
         loadDetail(item.id);
     };
 
@@ -575,6 +723,14 @@ const HomePage = ({ onNavigate = () => {} }) => {
         setDetailReplies([]);
         setReplyContent('');
         setDetailError('');
+        if (proofPreviewUrl) {
+            URL.revokeObjectURL(proofPreviewUrl);
+        }
+        setProofPreviewUrl('');
+        setProofFile(null);
+        setProofNote('');
+        setProofUploading(false);
+        setConfirmingPayout(false);
     };
 
     const submitReply = async () => {
@@ -695,9 +851,19 @@ const HomePage = ({ onNavigate = () => {} }) => {
         return MODE_TEXT[key] || detailListing.type || key;
     }, [detailListing, activeMode]);
 
+    const isErrandDetail = detailListing && (detailListing.type === 'errand' || (detailListing.type === 'acquire' && detailListing.category === 'service'));
+    const isErrandOwner = isErrandDetail && user?.id === detailListing?.user_id;
+    const isErrandRunner = isErrandDetail && user?.id === detailListing?.errand_runner_id;
+
     useEffect(() => {
         setActiveImageIndex(0);
     }, [detailListing?.id, galleryImages.length]);
+
+    useEffect(() => () => {
+        if (proofPreviewUrl) {
+            URL.revokeObjectURL(proofPreviewUrl);
+        }
+    }, [proofPreviewUrl]);
 
     const currentCategories = CATEGORY_CONFIG[activeMode] || CATEGORY_CONFIG.sale;
 
@@ -712,7 +878,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
             return <p className="text-center text-gray-500 py-10">当前分类下暂无内容。</p>;
         }
 
-        if (activeMode === 'sale' || activeMode === 'acquire') {
+        if (activeMode === 'sale' || activeMode === 'acquire' || activeMode === 'errand') {
             return (
                 <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3 md:gap-6">
                     {listings.map(item => (
@@ -722,6 +888,7 @@ const HomePage = ({ onNavigate = () => {} }) => {
                             onPurchase={handlePurchase}
                             onContact={handleContact}
                             onOpenDetail={openDetail}
+                            onAcceptErrand={handleAcceptErrand}
                             onToggleFavorite={handleToggleFavorite}
                             isFavorited={favoriteIds.has(item.id)}
                             theme={getModuleTheme(item.type || activeMode)}
@@ -824,8 +991,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
                             </select>
                         )}
                         
-                        {/* 仅在出售/收购模式且分类为跑腿服务时显示地点筛选器 */}
-                        {(activeMode === 'sale' || activeMode === 'acquire') && category === 'service' && (
+                        {/* 仅在跑腿代办模块且分类为跑腿服务时显示地点筛选器 */}
+                        {activeMode === 'errand' && category === 'service' && (
                             <>
                                 <select
                                     value={startLocation}
@@ -850,8 +1017,8 @@ const HomePage = ({ onNavigate = () => {} }) => {
                             </>
                         )}
 
-                        {/* 仅在出售/收购模式且分类为代课讲座时显示讲座筛选器 */}
-                        {(activeMode === 'sale' || activeMode === 'acquire') && category === 'lecture' && (
+                        {/* 仅在跑腿代办模块且分类为代课讲座时显示讲座筛选器 */}
+                        {activeMode === 'errand' && category === 'lecture' && (
                             <>
                                 <select
                                     value={lectureLocation}
@@ -938,221 +1105,366 @@ const HomePage = ({ onNavigate = () => {} }) => {
                                             <span>发布者：{detailListing.owner_name || detailListing.user_name}</span>
                                             <span>发布时间：{formatDateTime(detailListing.created_at)}</span>
                                         </div>
-                                        {detailListing.category === 'books' && (detailListing.book_type || detailListing.book_major) && (
+                                        {detailListing.category === "books" && (detailListing.book_type || detailListing.book_major) && (
                                             <div className="flex flex-wrap gap-3 text-sm text-gray-600">
                                                 {detailListing.book_type && <span>图书类型：{detailListing.book_type}</span>}
                                                 {detailListing.book_major && <span>所属专业：{detailListing.book_major}</span>}
                                             </div>
                                         )}
-                                        {detailListing.category === 'lecture' && (detailListing.lecture_location || detailListing.lecture_start_at || detailListing.lecture_end_at) && (
+                                        {detailListing.category === "lecture" && (detailListing.lecture_location || detailListing.lecture_start_at || detailListing.lecture_end_at) && (
                                             <div className="flex flex-wrap gap-3 text-sm text-gray-600">
                                                 {detailListing.lecture_location && <span>讲座地点：{detailListing.lecture_location}</span>}
                                                 {(detailListing.lecture_start_at || detailListing.lecture_end_at) && (
                                                     <span>
                                                         时间段：
-                                                        {detailListing.lecture_start_at ? formatDateTime(detailListing.lecture_start_at) : '未定'}
-                                                        {` ~ `}
-                                                        {detailListing.lecture_end_at ? formatDateTime(detailListing.lecture_end_at) : '未定'}
+                                                        {detailListing.lecture_start_at ? formatDateTime(detailListing.lecture_start_at) : "未定"}
+                                                        {" ~ "}
+                                                        {detailListing.lecture_end_at ? formatDateTime(detailListing.lecture_end_at) : "未定"}
                                                     </span>
                                                 )}
                                             </div>
                                         )}
-                                        {detailListing.type === 'sale' && (
+                                        {detailListing.type === "sale" && (
                                             <div className="text-2xl font-semibold text-emerald-600">
-                                                {detailListing.price ? `¥${Number(detailListing.price).toLocaleString()}` : '议价'}
+                                                {detailListing.price ? `¥${Number(detailListing.price).toLocaleString()}` : "议价"}
                                             </div>
                                         )}
-                                        
-                                        {/* 修复地点信息显示的条件判断 */}
-                                        {detailListing.category === 'service' && (
-                                            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                                        {isErrandDetail && (
+                                            <div className="text-2xl font-semibold text-emerald-600">
+                                                酬劳：¥{Number(detailListing.price ?? 0).toLocaleString()}
+                                            </div>
+                                        )}
+                                        {detailListing.category === "service" && (detailListing.start_location || detailListing.end_location) && (
+                                            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 space-y-2">
                                                 {detailListing.start_location && (
-                                                    <div className="flex items-start mb-2">
-                                                        <span className="text-sm font-medium text-gray-600 w-16">出发地点：</span>
+                                                    <div className="flex items-start">
+                                                        <span className="text-sm font-medium text-gray-600 w-20">出发地点：</span>
                                                         <span className="text-gray-800">{detailListing.start_location}</span>
                                                     </div>
                                                 )}
                                                 {detailListing.end_location && (
                                                     <div className="flex items-start">
-                                                        <span className="text-sm font-medium text-gray-600 w-16">目的地点：</span>
+                                                        <span className="text-sm font-medium text-gray-600 w-20">目的地点：</span>
                                                         <span className="text-gray-800">{detailListing.end_location}</span>
                                                     </div>
                                                 )}
                                             </div>
                                         )}
-                                        
-                                        {galleryImages.length > 0 && (
-                                            <div className="space-y-3">
-                                                <div className="relative bg-gray-100 rounded-lg border border-gray-100 flex items-center justify-center">
-                                                    <img
-                                                        src={galleryImages[Math.min(activeImageIndex, galleryImages.length - 1)]?.url}
-                                                        alt={detailListing.title}
-                                                        className="max-h-[70vh] w-full object-contain transition-transform duration-200 cursor-zoom-in"
-                                                        onClick={() => {
-                                                            const target = galleryImages[Math.min(activeImageIndex, galleryImages.length - 1)];
-                                                            if (!target?.url) return;
-                                                            window.open(target.url, '_blank', 'noopener');
-                                                        }}
-                                                        onError={(e) => {
-                                                            e.target.onerror = null;
-                                                            e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
-                                                        }}
-                                                    />
-                                                    {galleryImages.length > 1 && (
-                                                        <span className="absolute top-2 right-2 px-2 py-0.5 text-xs bg-black/60 text-white rounded-full">
-                                                            {activeImageIndex + 1} / {galleryImages.length}
-                                                        </span>
-                                                    )}
-                                                    <span className="absolute bottom-2 right-2 text-xs text-gray-500 bg-white/70 px-2 py-1 rounded-md">点击查看原图</span>
-                                                </div>
+                                        {isErrandDetail && detailListing.errand_private_note && (
+                                            <div className="bg-rose-50 border border-rose-100 rounded-lg p-3 space-y-1">
+                                                <div className="text-sm font-semibold text-rose-700">隐私备注（仅接单者与发起者可见）</div>
+                                                <p className="text-sm text-rose-700 whitespace-pre-line">{detailListing.errand_private_note}</p>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {galleryImages.length > 0 && (
+                                        <div className="space-y-3">
+                                            <div className="relative bg-gray-100 rounded-lg border border-gray-100 flex items-center justify-center">
+                                                <img
+                                                    src={galleryImages[Math.min(activeImageIndex, galleryImages.length - 1)]?.url || getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE}
+                                                    alt={detailListing.title}
+                                                    className="max-h-[70vh] w-full object-contain transition-transform duration-200 cursor-zoom-in"
+                                                    onClick={() => {
+                                                        const target = galleryImages[Math.min(activeImageIndex, galleryImages.length - 1)];
+                                                        if (!target?.url) return;
+                                                        window.open(target.url, "_blank", "noopener");
+                                                    }}
+                                                    onError={(e) => {
+                                                        e.target.onerror = null;
+                                                        e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
+                                                    }}
+                                                />
                                                 {galleryImages.length > 1 && (
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {galleryImages.map((image, index) => (
-                                                            <button
-                                                                type="button"
-                                                                key={image.id ?? index}
-                                                                onClick={() => setActiveImageIndex(index)}
-                                                                className={`relative w-16 h-16 rounded-lg overflow-hidden border ${
-                                                                    index === activeImageIndex
-                                                                        ? 'border-indigo-500 ring-2 ring-indigo-200'
-                                                                        : 'border-transparent'
-                                                                }`}
-                                                            >
-                                                                <img
-                                                                    src={image.url}
-                                                                    alt={`预览图 ${index + 1}`}
-                                                                    className="w-full h-full object-cover"
-                                                                    onError={(e) => {
-                                                                        e.target.onerror = null;
-                                                                        e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
-                                                                    }}
-                                                                />
-                                                            </button>
-                                                        ))}
+                                                    <div className="absolute bottom-3 right-3 bg-black/60 text-white text-xs px-3 py-1 rounded-full">
+                                                        {Math.min(activeImageIndex + 1, galleryImages.length)} / {galleryImages.length}
                                                     </div>
                                                 )}
                                             </div>
-                                        )}
-                                        <p className="leading-relaxed text-gray-700 whitespace-pre-line">{detailListing.description}</p>
-                                    </div>
-
-                                    <div className="pt-4 border-t border-gray-100">
-                                        <h5 className="text-lg font-semibold text-gray-800 mb-3">留言 ({totalRepliesCount})</h5>
-                                        <div className="space-y-3">
-                                            {detailReplies.length === 0 && (
-                                                <p className="text-sm text-gray-500">暂无回复，快来抢沙发吧～</p>
+                                            {galleryImages.length > 1 && (
+                                                <div className="grid grid-cols-5 gap-2">
+                                                    {galleryImages.map((image, index) => (
+                                                        <button
+                                                            key={image.id || index}
+                                                            type="button"
+                                                            onClick={() => setActiveImageIndex(index)}
+                                                            className={`relative h-20 rounded-md overflow-hidden border ${index === activeImageIndex ? "border-indigo-500 ring-2 ring-indigo-200" : "border-transparent hover:border-gray-200"}`}
+                                                        >
+                                                            <img
+                                                                src={image.url}
+                                                                alt={`${detailListing.title}-${index + 1}`}
+                                                                className="w-full h-full object-cover"
+                                                                onError={(e) => {
+                                                                    e.target.onerror = null;
+                                                                    e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
+                                                                }}
+                                                            />
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             )}
-                                            {detailReplies.map((root) => (
-                                                <div key={root.id} className="bg-gray-50 rounded-lg px-4 py-3 space-y-2">
-                                                    <div className="flex justify-between text-sm text-gray-500">
-                                                        <span>{root.user_name}</span>
-                                                        <span>{formatDateTime(root.created_at)}</span>
+                                        </div>
+                                    )}
+
+                                    {isErrandDetail && (
+                                        <div className="space-y-4">
+                                            <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 space-y-1 text-sm text-emerald-800">
+                                                <div className="font-semibold text-emerald-700">订单进度</div>
+                                                <div>· 支付时间：{detailListing.errand_paid_at ? formatDateTime(detailListing.errand_paid_at) : "发单人尚未模拟支付"}</div>
+                                                <div>· 接单人：{detailListing.errand_runner_name ? detailListing.errand_runner_name : "等待接单"}</div>
+                                                <div>
+                                                    · 凭证状态：
+                                                    {detailListing.errand_completion_image_url
+                                                        ? `已提交${detailListing.errand_completion_at ? `（${formatDateTime(detailListing.errand_completion_at)}）` : ""}`
+                                                        : "待提交"}
+                                                </div>
+                                                <div>· 酬劳发放：{detailListing.errand_payment_released_at ? formatDateTime(detailListing.errand_payment_released_at) : "待确认"}</div>
+                                            </div>
+
+                                            {detailListing.errand_completion_image_url && (
+                                                <div className="space-y-2">
+                                                    <h5 className="text-sm font-semibold text-gray-700">完成凭证</h5>
+                                                    <div className="bg-gray-100 rounded-lg border border-gray-200 w-full max-w-sm overflow-hidden">
+                                                        <img
+                                                            src={resolveImageUrl(detailListing.errand_completion_image_url, detailImageFallbackType)}
+                                                            alt="完成凭证"
+                                                            className="w-full h-full object-contain bg-white cursor-zoom-in"
+                                                            onClick={() => {
+                                                                const target = resolveImageUrl(detailListing.errand_completion_image_url, detailImageFallbackType);
+                                                                if (target) window.open(target, "_blank", "noopener");
+                                                            }}
+                                                            onError={(e) => {
+                                                                e.target.onerror = null;
+                                                                e.target.src = getDefaultListingImage(detailImageFallbackType) || FALLBACK_IMAGE;
+                                                            }}
+                                                        />
                                                     </div>
-                                                    {editingReplyId === root.id ? (
-                                                        <div className="space-y-2">
-                                                            <textarea className="w-full px-3 py-2 text-sm border rounded-md" rows={3} value={editingContent} onChange={(e)=>setEditingContent(e.target.value)} />
-                                                            <div className="flex gap-2 text-xs">
-                                                                <button type="button" onClick={handleSaveEdit} className="px-3 py-1 rounded bg-indigo-600 text-white">保存</button>
-                                                                <button type="button" onClick={handleCancelEdit} className="px-3 py-1 rounded border">取消</button>
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        <p className="text-gray-700 text-sm whitespace-pre-line">{renderWithMentions(root.content)}</p>
-                                                    )}
-                                                    <div className="text-xs text-indigo-600">
-                                                        <button type="button" onClick={() => handleStartReply(root.id, root.user_name)} className="hover:underline mr-3">回复</button>
-                                                        {user && user.id === root.user_id && editingReplyId !== root.id && (
-                                                            <>
-                                                                <button type="button" onClick={() => handleStartEdit(root)} className="hover:underline mr-3 text-gray-600">编辑</button>
-                                                                <button type="button" onClick={() => handleDeleteReply(root.id)} className="hover:underline text-red-600">删除</button>
-                                                            </>
-                                                        )}
-                                                    </div>
-                                                    {Array.isArray(root.children) && root.children.length > 0 && (
-                                                        <div className="mt-2 space-y-2 pl-3 border-l border-gray-200">
-                                                            {root.children.map((child) => (
-                                                                <div key={child.id} className="bg-white rounded-md px-3 py-2">
-                                                                    <div className="flex justify-between text-xs text-gray-500">
-                                                                        <span>{child.user_name}</span>
-                                                                        <span>{formatDateTime(child.created_at)}</span>
-                                                                    </div>
-                                                                    {editingReplyId === child.id ? (
-                                                                        <div className="space-y-2">
-                                                                            <textarea className="w-full px-3 py-2 text-sm border rounded-md" rows={3} value={editingContent} onChange={(e)=>setEditingContent(e.target.value)} />
-                                                                            <div className="flex gap-2 text-xs">
-                                                                                <button type="button" onClick={handleSaveEdit} className="px-3 py-1 rounded bg-indigo-600 text-white">保存</button>
-                                                                                <button type="button" onClick={handleCancelEdit} className="px-3 py-1 rounded border">取消</button>
-                                                                            </div>
-                                                                        </div>
-                                                                    ) : (
-                                                                        <p className="text-gray-700 text-sm whitespace-pre-line">{renderWithMentions(child.content)}</p>
-                                                                    )}
-                                                                    <div className="text-xs text-indigo-600">
-                                                                        <button type="button" onClick={() => handleStartReply(root.id, child.user_name)} className="hover:underline mr-3">回复</button>
-                                                                        {user && user.id === child.user_id && editingReplyId !== child.id && (
-                                                                            <>
-                                                                                <button type="button" onClick={() => handleStartEdit(child)} className="hover:underline mr-3 text-gray-600">编辑</button>
-                                                                                <button type="button" onClick={() => handleDeleteReply(child.id)} className="hover:underline text-red-600">删除</button>
-                                                                            </>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
+                                                    {detailListing.errand_completion_note && (
+                                                        <p className="text-sm text-gray-600 whitespace-pre-line">备注：{detailListing.errand_completion_note}</p>
                                                     )}
                                                 </div>
-                                            ))}
+                                            )}
+
+                                            {isErrandRunner && detailListing.status === "in_progress" && !detailListing.errand_payment_released_at && (
+                                                <div className="border border-emerald-200 rounded-lg px-4 py-3 space-y-3">
+                                                    <div className="text-sm font-medium text-gray-700">上传完成凭证</div>
+                                                    <div className="flex flex-col md:flex-row md:items-center gap-3">
+                                                        <label className="cursor-pointer inline-flex items-center gap-2 text-sm text-gray-600">
+                                                            <span className="px-3 py-2 border rounded-md bg-white hover:bg-gray-50">选择图片</span>
+                                                            <input type="file" accept="image/*" className="hidden" onChange={handleProofFileChange} />
+                                                            {proofFile && <span className="text-xs text-gray-500 truncate max-w-[160px]">{proofFile.name}</span>}
+                                                        </label>
+                                                        {proofPreviewUrl && (
+                                                            <img
+                                                                src={proofPreviewUrl}
+                                                                alt="凭证预览"
+                                                                className="w-24 h-24 object-cover rounded-md border border-gray-200"
+                                                            />
+                                                        )}
+                                                    </div>
+                                                    <textarea
+                                                        value={proofNote}
+                                                        onChange={(e) => setProofNote(e.target.value)}
+                                                        placeholder="补充说明（可选）"
+                                                        rows={3}
+                                                        className="w-full px-3 py-2 text-sm border rounded-md focus:ring-emerald-500 focus:border-emerald-500"
+                                                    />
+                                                    <div className="flex flex-wrap gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleUploadProof}
+                                                            disabled={proofUploading || !proofFile}
+                                                            className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500 disabled:bg-emerald-300"
+                                                        >
+                                                            {proofUploading ? "上传中..." : "提交凭证"}
+                                                        </button>
+                                                        {(proofFile || proofPreviewUrl || proofNote) && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    if (proofPreviewUrl) {
+                                                                        URL.revokeObjectURL(proofPreviewUrl);
+                                                                    }
+                                                                    setProofFile(null);
+                                                                    setProofPreviewUrl("");
+                                                                    setProofNote("");
+                                                                }}
+                                                                className="px-4 py-2 text-sm font-medium rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100"
+                                                            >
+                                                                清除草稿
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {isErrandOwner && detailListing.errand_runner_id && !detailListing.errand_payment_released_at && (
+                                                <div className="border border-emerald-200 rounded-lg px-4 py-3 space-y-3">
+                                                    <div className="text-sm font-medium text-gray-700">确认任务完成</div>
+                                                    <p className="text-sm text-gray-600">
+                                                        确认无误后将酬劳划转给 {detailListing.errand_runner_name || "接单人"}。
+                                                    </p>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleConfirmErrand}
+                                                        disabled={confirmingPayout || !detailListing.errand_completion_image_url}
+                                                        className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500 disabled:bg-emerald-300"
+                                                    >
+                                                        {confirmingPayout ? "确认中..." : "确认完成"}
+                                                    </button>
+                                                    {!detailListing.errand_completion_image_url && (
+                                                        <p className="text-xs text-red-500">接单人尚未提交完成凭证。</p>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
-                                    </div>
+                                    )}
+
+                                    {!isErrandDetail && (
+                                        <div className="pt-4 border-t border-gray-100">
+                                            <h5 className="text-lg font-semibold text-gray-800 mb-3">留言 ({totalRepliesCount})</h5>
+                                            <div className="space-y-3">
+                                                {detailReplies.length === 0 && (
+                                                    <p className="text-sm text-gray-500">暂无回复，快来抢沙发吧～</p>
+                                                )}
+                                                {detailReplies.map((root) => (
+                                                    <div key={root.id} className="bg-gray-50 rounded-lg px-4 py-3 space-y-2">
+                                                        <div className="flex justify-between text-sm text-gray-500">
+                                                            <span>{root.user_name}</span>
+                                                            <span>{formatDateTime(root.created_at)}</span>
+                                                        </div>
+                                                        {editingReplyId === root.id ? (
+                                                            <div className="space-y-2">
+                                                                <textarea
+                                                                    className="w-full px-3 py-2 text-sm border rounded-md"
+                                                                    rows={3}
+                                                                    value={editingContent}
+                                                                    onChange={(e) => setEditingContent(e.target.value)}
+                                                                />
+                                                                <div className="flex gap-2 text-xs">
+                                                                    <button type="button" onClick={handleSaveEdit} className="px-3 py-1 rounded bg-indigo-600 text-white">保存</button>
+                                                                    <button type="button" onClick={handleCancelEdit} className="px-3 py-1 rounded border">取消</button>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <p className="text-gray-700 text-sm whitespace-pre-line">{renderWithMentions(root.content)}</p>
+                                                        )}
+                                                        <div className="text-xs text-indigo-600">
+                                                            <button type="button" onClick={() => handleStartReply(root.id, root.user_name)} className="hover:underline mr-3">回复</button>
+                                                            {user && user.id === root.user_id && editingReplyId !== root.id && (
+                                                                <>
+                                                                    <button type="button" onClick={() => handleStartEdit(root)} className="hover:underline mr-3 text-gray-600">编辑</button>
+                                                                    <button type="button" onClick={() => handleDeleteReply(root.id)} className="hover:underline text-red-600">删除</button>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                        {Array.isArray(root.children) && root.children.length > 0 && (
+                                                            <div className="mt-2 space-y-2 pl-3 border-l border-gray-200">
+                                                                {root.children.map((child) => (
+                                                                    <div key={child.id} className="bg-white rounded-md px-3 py-2">
+                                                                        <div className="flex justify-between text-xs text-gray-500">
+                                                                            <span>{child.user_name}</span>
+                                                                            <span>{formatDateTime(child.created_at)}</span>
+                                                                        </div>
+                                                                        {editingReplyId === child.id ? (
+                                                                            <div className="space-y-2">
+                                                                                <textarea
+                                                                                    className="w-full px-3 py-2 text-sm border rounded-md"
+                                                                                    rows={3}
+                                                                                    value={editingContent}
+                                                                                    onChange={(e) => setEditingContent(e.target.value)}
+                                                                                />
+                                                                                <div className="flex gap-2 text-xs">
+                                                                                    <button type="button" onClick={handleSaveEdit} className="px-3 py-1 rounded bg-indigo-600 text-white">保存</button>
+                                                                                    <button type="button" onClick={handleCancelEdit} className="px-3 py-1 rounded border">取消</button>
+                                                                                </div>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <p className="text-gray-700 text-sm whitespace-pre-line">{renderWithMentions(child.content)}</p>
+                                                                        )}
+                                                                        <div className="text-xs text-indigo-600">
+                                                                            <button type="button" onClick={() => handleStartReply(root.id, child.user_name)} className="hover:underline mr-3">回复</button>
+                                                                            {user && user.id === child.user_id && editingReplyId !== child.id && (
+                                                                                <>
+                                                                                    <button type="button" onClick={() => handleStartEdit(child)} className="hover:underline mr-3 text-gray-600">编辑</button>
+                                                                                    <button type="button" onClick={() => handleDeleteReply(child.id)} className="hover:underline text-red-600">删除</button>
+                                                                                </>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </>
                             )}
                         </div>
-
                         <div className="border-t border-gray-100 bg-gray-50 px-6 py-4">
-                            {replyingTo && (
-                                <div className="mb-2 text-xs text-gray-600 flex items-center gap-2">
-                                    <span>正在回复：@{replyingTo.targetName}</span>
-                                    <button type="button" className="text-indigo-600 hover:underline" onClick={() => setReplyingTo(null)}>取消</button>
-                                </div>
-                            )}
-                            <textarea
-                                value={replyContent}
-                                onChange={(e) => setReplyContent(e.target.value)}
-                                placeholder={user ? (replyingTo ? `回复 @${replyingTo.targetName}...` : '输入你的回复...') : '登录后才能回复'}
-                                rows={3}
-                                disabled={!user || detailLoading}
-                                className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
-                            />
-                            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-3">
-                                <div className="flex flex-wrap gap-2">
-                                    {detailListing && detailListing.user_id !== user?.id && (
+                            {isErrandDetail ? (
+                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                                    <p className="text-sm text-gray-600">跑腿订单留言功能已关闭，请通过“我的消息”沟通具体细节。</p>
+                                    {detailListing && detailListing.errand_runner_id && (isErrandRunner || isErrandOwner) && (
                                         <button
                                             type="button"
                                             onClick={() => handleContact(detailListing)}
                                             className="px-4 py-2 text-sm font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100"
                                         >
-                                            联系对方
-                                        </button>
-                                    )}
-                                    {detailListing && detailListing.type === 'sale' && detailListing.user_id !== user?.id && detailListing.status === 'available' && (
-                                        <button
-                                            type="button"
-                                            onClick={() => handlePurchase(detailListing)}
-                                            className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500"
-                                        >
-                                            立即购买
+                                            {isErrandOwner ? `联系${detailListing.errand_runner_name || '接单者'}` : `联系${detailListing.user_name || '发起者'}`}
                                         </button>
                                     )}
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={submitReply}
-                                    disabled={!user || detailLoading}
-                                    className="px-4 py-2 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-300"
-                                >
-                                    发送回复
-                                </button>
-                            </div>
+                            ) : (
+                                <>
+                                    {replyingTo && (
+                                        <div className="mb-2 text-xs text-gray-600 flex items-center gap-2">
+                                            <span>正在回复：@{replyingTo.targetName}</span>
+                                            <button type="button" className="text-indigo-600 hover:underline" onClick={() => setReplyingTo(null)}>取消</button>
+                                        </div>
+                                    )}
+                                    <textarea
+                                        value={replyContent}
+                                        onChange={(e) => setReplyContent(e.target.value)}
+                                        placeholder={user ? (replyingTo ? `回复 @${replyingTo.targetName}...` : "输入你的回复...") : "登录后才能回复"}
+                                        rows={3}
+                                        disabled={!user || detailLoading}
+                                        className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
+                                    />
+                                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-3">
+                                        <div className="flex flex-wrap gap-2">
+                                            {detailListing && detailListing.user_id !== user?.id && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleContact(detailListing)}
+                                                    className="px-4 py-2 text-sm font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100"
+                                                >
+                                                    联系对方
+                                                </button>
+                                            )}
+                                            {detailListing && detailListing.type === "sale" && detailListing.user_id !== user?.id && detailListing.status === "available" && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handlePurchase(detailListing)}
+                                                    className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-500"
+                                                >
+                                                    立即购买
+                                                </button>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={submitReply}
+                                            disabled={!user || detailLoading}
+                                            className="px-4 py-2 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-300"
+                                        >
+                                            发送回复
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
