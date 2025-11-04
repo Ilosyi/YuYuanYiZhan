@@ -467,45 +467,64 @@ initializeDatabase();
 // =================================================================
 // 3. 文件上传配置 (Multer File Upload)
 // =================================================================
-/**
- * Multer 文件存储：保存到 uploads 目录，文件名 image-<timestamp>-<rand>.<ext>
- */
+// 配置 Multer 的磁盘存储引擎，定义文件保存路径和文件名生成规则
 const storage = multer.diskStorage({
-    // 文件保存目录：固定到项目下的 uploads/
-    destination: (req, file, cb) => cb(null, 'uploads/'),
-    // 文件名：image-时间戳-随机数.原始后缀，保证唯一且保留原始扩展名
+    // 定义文件保存的目标目录
+    // destination 的函数签名：(req, file, cb) => void
+    // - req: 本次请求对象（可用于根据路由动态决定保存目录）
+    // - file: 当前正在处理的文件对象（包含原始文件名、MIME 类型等）
+    // - cb: 回调函数，形如 cb(error, destinationPath)
+    destination: (req, file, cb) => {
+        // 这里将所有上传的文件保存到项目根目录下的 'uploads/' 文件夹
+        // 注意：'uploads/' 会被上面 app.use('/uploads', express.static(...)) 映射为可直接访问的静态资源
+        cb(null, 'uploads/');
+    },
+    // 定义文件保存时的文件名
+    // filename 的函数签名：(req, file, cb) => void
+    // - 通过回调返回最终文件名，确保唯一性并保留原始扩展名
     filename: (req, file, cb) => {
+        // 生成唯一后缀：时间戳（避免冲突）+ 随机数（同一毫秒多文件）
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'image-' + uniqueSuffix + path.extname(file.originalname));
+        // 获取原始文件的扩展名（如 .jpg、.png）
+        const ext = path.extname(file.originalname);
+        // 构造最终文件名：固定前缀 'image-' + 唯一后缀 + 原始扩展名
+        // 例如：image-1620000000000-123456789.jpg
+        cb(null, 'image-' + uniqueSuffix + ext);
     }
 });
-/**
- * 通用上传中间件：限制大小为 5MB，仅允许图片 MIME 类型
- */
+
+// 通用上传中间件：限制大小为 5MB，仅允许图片类型
+// 说明：multer(options) 会返回一个中间件工厂，后续通过 .single/.array/.fields 细化字段规则
 const upload = multer({
-    storage: storage,
+    storage: storage, // 使用上面自定义的磁盘存储
     // 单个文件大小上限：5MB，避免占用过多磁盘空间
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
     // 仅允许图片类型（根据 MIME 类型判断）
+    // fileFilter 的签名：(req, file, cb) => void；cb(null, true) 表示接受该文件
     fileFilter: (req, file, cb) => {
+        // 常见图片 MIME：image/jpeg, image/png, image/webp, image/gif 等
         if (file.mimetype.startsWith('image/')) {
             cb(null, true);
         } else {
+            // 拒绝非图片文件，第二个参数 false 表示不接收
             cb(new Error('Only image files are allowed!'), false);
         }
     }
 });
 
-/** 帖子图片上传（支持 images[] 多图与 image 单图） */
+// 帖子图片上传（支持 images[] 多图与 image 单图）
+// 使用 upload.fields 来同时处理多个字段：
+// - name: 字段名；maxCount: 该字段允许的最大文件数
+// 处理后，multer 会把文件列表挂在 req.files 对应字段上（如 req.files.images）
 const uploadListingImages = upload.fields([
     // 支持一次性上传多张图片：images[]
     { name: 'images', maxCount: 10 },
     // 同时兼容单张图片字段：image
     { name: 'image', maxCount: 1 }
 ]);
-/** 用户头像上传（单文件） */
+// 用户头像上传（单文件）：处理完成后文件对象位于 req.file
 const uploadAvatar = upload.single('avatar'); // 头像只允许单文件
-/** 跑腿订单完成凭证（单文件） */
+// 跑腿订单完成凭证（单文件）：处理完成后文件对象位于 req.file
 const uploadErrandProof = upload.single('evidence'); // 跑腿完成凭证，单文件
 
 /**
